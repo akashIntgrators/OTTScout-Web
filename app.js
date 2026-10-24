@@ -16,7 +16,7 @@ const DAY = 86400;
 const PAGE_SIZE = 24;
 let titles = sampleTitles;
 let liveCatalog = null;
-let view = 'discover';
+let view = 'weekly';
 let contentType = 'all';
 let visibleLimit = PAGE_SIZE;
 
@@ -123,7 +123,9 @@ function cardFor(title) {
   poster.append(save);
   const body = element('div', undefined, 'card-body');
   const audio = [...new Set(offers.flatMap(offer => offer.audio))];
-  body.append(element('h3', title.title), element('div', formatLanguages(audio), 'card-languages'));
+  const heading = element('h3', undefined, 'card-title');
+  heading.append(document.createTextNode(title.title + ' '), element('span', '· ' + formatLanguages(audio), 'card-languages'));
+  body.append(heading);
   const options = element('details', undefined, 'watch-options');
   options.append(element('summary', 'Where to watch'));
   offers.forEach(offer => options.append(offerBody(offer)));
