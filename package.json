@@ -1,1 +1,11 @@
-{"name":"ottscout-web","version":"0.1.0","private":true,"scripts":{"dev":"python3 -m http.server 5173 --directory dist","check":"node --check dist/app.js"}}
+{
+  "name": "ottscout-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "python3 -m http.server 5174 --bind 127.0.0.1",
+    "check": "node --check app.js",
+    "test": "python3 -m unittest discover -s tests -v",
+    "build": "python3 scripts/build_site.py"
+  }
+}

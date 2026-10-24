@@ -1,17 +1,17 @@
 # OTTScout
 
-India-first streaming discovery dashboard. Responsive prototype with movie/series search, seven platform filters, six audio-language filters, weekly sample picks, and a browser-local watchlist.
+India-first movie and series discovery, hosted on GitHub Pages at http://ottscout.techiwithhelmet.com/. Supports seven OTT filters, six audio languages, All / Movies / Series, and a browser-local watchlist.
 
-## Run
+## Live catalog pilot
 
-`npm run dev`, then open http://localhost:5173.
+The six-hour collector, SQLite state, usage reports, and conditional Pages publication are implemented. Activation requires an API secret and an initial manual run. The website uses clearly labelled sample titles until a validated catalog is published. See [pilot setup and limitations](docs/catalog-pilot.md).
 
-`npm run check` checks JavaScript syntax. Python 3 is required for the development server; Node.js is required for the check.
+Initial live scope is a popular-title sample plus subsequent show-level changes; full catalogs, episode tracking, email alerts, and cross-device accounts are future work. Coverage of all seven OTTs is not guaranteed and is checked against the provider. Audio and subtitles are offer-specific; unknown dubbing is not inferred.
 
-## Data status
+## Development
 
-All titles and availability records are fictional illustrations, visibly labeled in the interface. There is no live streaming API, authentication, email delivery, or background release monitoring. Watchlists persist only in the current browser. Upcoming integration must verify India coverage and platform-specific audio/subtitle availability, distinguish subscription/rental/add-on offers, store source timestamps, and comply with provider licensing and attribution. API keys must remain server-side.
+`npm run dev` starts the root website at http://127.0.0.1:5174. `npm run check` checks browser JavaScript. `npm test` runs offline collector tests. `npm run build` stages public files in `.site/`.
 
-## Product scope
+The root index.html, app.js, style.css, and assets/ are canonical. The older dist/ directory is a legacy uploaded prototype; the current scripts and Pages deployment do not use it.
 
-India; English, Hindi, Telugu, Tamil, Kannada, Malayalam; Netflix, Prime Video, Sun NXT, JioHotstar, ZEE5, aha, SonyLIV. Audio filters match any selected language.
+API secrets, `.state/` database files, and reports are excluded from Git. The pilot uses best-effort GitHub Actions cache for state and stops provider calls after 30 days; production needs durable database storage. Only the curated end-user catalog may be published after validation and provider-terms review.
