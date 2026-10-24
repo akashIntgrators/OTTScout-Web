@@ -21,6 +21,15 @@ if path.exists():
              'Review the report artifact for run history. Scheduled times are approximate.']
 else:
     lines = ['## OTTScout pilot', '', 'No report produced. Check the missing secret or database message above.']
+if path.exists() and 'catalog' in report:
+    catalog = report['catalog']
+    lines += ['', '### Imported sample coverage', '',
+              f"{catalog['totalTitles']} unique titles stored; {catalog['titlesWithTargetAudio']} have verified target audio and can appear in the dashboard.", '',
+              '| Platform | Offers | Offers with target audio | Audio unverified |',
+              '| --- | ---: | ---: | ---: |']
+    for name, stats in catalog['platforms'].items():
+        lines.append(f"| {name} | {stats['offers']} | {stats['offersWithTargetAudio']} | {stats['unknownAudioOffers']} |")
+    lines += ['', 'Counts describe the imported sample, not complete platform coverage.']
 text = '\n'.join(lines) + '\n'
 summary = os.environ.get('GITHUB_STEP_SUMMARY')
 if summary:

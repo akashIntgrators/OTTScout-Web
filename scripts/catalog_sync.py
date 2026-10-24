@@ -254,7 +254,21 @@ def report(db, now):
     begin = get_meta(db, 'pilot_started', now)
     month_start = int(datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     coverage = get_meta(db, 'coverage', {})
-    return {'generatedAt': stamp(now), 'pilotStartedAt': stamp(begin),
+    catalog = {'totalTitles': 0, 'titlesWithTargetAudio': 0, 'types': {}, 'platforms': {}}
+    for raw, in db.execute('SELECT body FROM titles'):
+        title = json.loads(raw)
+        catalog['totalTitles'] += 1
+        catalog['types'][title['type']] = catalog['types'].get(title['type'], 0) + 1
+        if any(language in LANGUAGES.values() for offer in title['offers'] for language in offer['audio']):
+            catalog['titlesWithTargetAudio'] += 1
+        for offer in title['offers']:
+            stats = catalog['platforms'].setdefault(offer['platform'], {'offers': 0, 'offersWithTargetAudio': 0, 'unknownAudioOffers': 0, 'audioLanguages': {}})
+            stats['offers'] += 1
+            stats['offersWithTargetAudio'] += int(any(language in LANGUAGES.values() for language in offer['audio']))
+            stats['unknownAudioOffers'] += int(not offer['audio'])
+            for language in offer['audio']:
+                stats['audioLanguages'][language] = stats['audioLanguages'].get(language, 0) + 1
+    return {'generatedAt': stamp(now), 'catalog': catalog, 'pilotStartedAt': stamp(begin),
             'pilotEndsAt': stamp(begin + 30 * DAY), 'scheduleHours': 6,
             'requestsThisMonth': db.execute('SELECT count(*) FROM requests WHERE at>=?', (month_start,)).fetchone()[0],
             'requestsDuringPilot': db.execute('SELECT count(*) FROM requests WHERE at>=?', (begin,)).fetchone()[0],
