@@ -117,6 +117,54 @@ class CatalogTests(unittest.TestCase):
             with self.assertRaises(sync.BudgetReached):
                 client.get('/countries/in')
         self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0], 1)
+    def test_provider_history_can_populate_weekly_for_an_initial_title(self):
+        class History(FakeClient):
+            def get(self, endpoint, params=None):
+                if endpoint == '/changes' and params['from'] == NOW - 7 * sync.DAY:
+                    return {'shows': {'movie': show('movie')}, 'changes': [
+                        {'showId': 'movie', 'service': {'id': 'netflix'}, 'timestamp': NOW - sync.DAY,
+                         'link': 'https://example.com/watch'}], 'hasMore': False}
+                return super().get(endpoint, params)
+        sync.sync(self.db, History(), NOW)
+        path = self.root / 'catalog.json'
+        sync.export_catalog(self.db, path, NOW)
+        title = next(t for t in json.loads(path.read_text())['titles'] if t['id'] == 'motn:movie')
+        self.assertTrue(title['weekly'])
+        self.assertEqual(title['weeklyUpdatedAt'], NOW - sync.DAY)
+        self.assertTrue(json.loads(path.read_text())['recentHistoryComplete'])
+        sync.export_catalog(self.db, path, NOW + 8 * sync.DAY)
+        self.assertFalse(next(t for t in json.loads(path.read_text())['titles'] if t['id'] == 'motn:movie')['weekly'])
+    def test_recent_history_resumes_at_saved_cursor_after_budget_limit(self):
+        class FirstPage:
+            calls = 0
+            def get(self, endpoint, params):
+                self.calls += 1
+                if self.calls > 1:
+                    raise sync.BudgetReached('test limit')
+                return {'shows': {'old': show('old')}, 'changes': [
+                    {'showId': 'old', 'service': {'id': 'netflix'}, 'timestamp': NOW - sync.DAY}],
+                    'hasMore': True, 'nextCursor': 'second-page'}
+        with self.assertRaises(sync.BudgetReached):
+            sync.backfill_recent(self.db, FirstPage(), {'Netflix':'netflix'}, NOW)
+        self.assertEqual(sync.get_meta(self.db,'recent_backfill_v1')['cursor'],'second-page')
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0],1)
+        class SecondPage:
+            def get(inner, endpoint, params):
+                self.assertEqual(params['cursor'],'second-page')
+                self.assertEqual(params['from'], NOW - 7 * sync.DAY)
+                self.assertEqual(params['to'], NOW)
+                return {'shows':{},'changes':[],'hasMore':False}
+        sync.backfill_recent(self.db, SecondPage(), {'Netflix':'netflix'}, NOW + 300)
+        self.assertTrue(sync.get_meta(self.db,'recent_backfill_v1')['complete'])
+    def test_invalid_history_page_preserves_cursor_and_titles(self):
+        class Invalid:
+            def get(self, endpoint, params):
+                return {'shows':{'old':show('old')},'changes':[
+                    {'showId':'old','service':{'id':'netflix'},'timestamp':NOW + sync.DAY}], 'hasMore':False}
+        with self.assertRaises(sync.SyncError):
+            sync.backfill_recent(self.db, Invalid(), {'Netflix':'netflix'}, NOW)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+        self.assertFalse(sync.get_meta(self.db,'recent_backfill_v1')['complete'])
     def test_expired_pilot_makes_zero_calls_without_a_key(self):
         sync.set_meta(self.db, 'pilot_started', 1)
         self.db.commit()
