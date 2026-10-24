@@ -122,17 +122,12 @@ function cardFor(title) {
   };
   poster.append(save);
   const body = element('div', undefined, 'card-body');
-  body.append(element('h3', title.title), element('div', `${title.year || 'Year unverified'} · ${title.type}`, 'meta'));
-  const primary = offerBody(offers[0], false);
-  primary.className = 'offer-primary';
-  body.append(primary);
+  const audio = [...new Set(offers.flatMap(offer => offer.audio))];
+  body.append(element('h3', title.title), element('div', formatLanguages(audio), 'card-languages'));
   const options = element('details', undefined, 'watch-options');
-  options.append(element('summary', offers.length > 1 ? `${offers.length} watch options & subtitles` : 'Details & subtitles'));
+  options.append(element('summary', 'Where to watch'));
   offers.forEach(offer => options.append(offerBody(offer)));
   body.append(options);
-  if (view === 'weekly' && Number.isFinite(title.weeklyUpdatedAt)) {
-    body.append(element('div', `Added ${new Date(title.weeklyUpdatedAt * 1000).toLocaleDateString('en-IN',{day:'numeric',month:'short',timeZone:'Asia/Kolkata'})}`, 'weekly-label'));
-  }
   card.append(poster, body);
   return card;
 }
