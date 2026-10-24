@@ -124,7 +124,9 @@ function cardFor(title) {
   const body = element('div', undefined, 'card-body');
   const audio = [...new Set(offers.flatMap(offer => offer.audio))];
   const heading = element('h3', undefined, 'card-title');
-  heading.append(document.createTextNode(title.title + ' '), element('span', '· ' + formatLanguages(audio), 'card-languages'));
+  const name = element(liveCatalog ? 'a' : 'span', title.title);
+  if (liveCatalog) name.href = '/titles/' + encodeURIComponent(title.id.replace(/^motn:/, '')) + '/';
+  heading.append(name, document.createTextNode(' '), element('span', '· ' + formatLanguages(audio), 'card-languages'));
   body.append(heading);
   const options = element('details', undefined, 'watch-options');
   options.append(element('summary', 'Where to watch'));

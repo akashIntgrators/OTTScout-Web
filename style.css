@@ -3,3 +3,5 @@
 .card-languages{font-size:10px;line-height:1.5;color:var(--muted)}.watch-options{border-top:0;margin-top:5px;padding-top:0}.watch-options>summary{font-size:9px}.card-body{padding:10px 12px}
 
 .card-title .card-languages{display:inline;font-weight:400;font-size:.82em;line-height:inherit}
+
+.seo-page{max-width:1000px;padding-top:24px}.seo-nav{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0;color:var(--accent);font-size:12px}.seo-description,.seo-note{color:var(--muted)}.seo-note{font-size:12px}.seo-list{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.seo-list li,.seo-offers li{border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--panel)}.seo-list a,.seo-offers a{color:var(--accent)}.seo-list span,.seo-list small{color:var(--muted);font-size:12px}.seo-list small{display:block}.seo-offers{list-style:none;padding:0}.seo-offers li{margin-bottom:12px}.seo-offers p{margin:5px 0;font-size:13px}.card-title a:hover{text-decoration:underline}
