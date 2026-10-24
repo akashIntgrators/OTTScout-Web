@@ -171,6 +171,54 @@ def read_pages(client, endpoint, params, shows_map=False):
             raise SyncError('Missing or repeated pagination cursor')
         seen.add(cursor)
 
+def backfill_recent(db, client, mapping, now):
+    """Resume a one-time seven-day history query; never infer history from baseline imports."""
+    state = get_meta(db, 'recent_backfill_v1')
+    if state and state.get('complete'):
+        return 0
+    if state is None:
+        state = {'from': now - 7 * DAY, 'to': now, 'cursor': None, 'complete': False, 'pages': 0}
+        set_meta(db, 'recent_backfill_v1', state)
+        db.commit()
+    if now - state['from'] > 30 * DAY:
+        raise SyncError('Recent-history backfill expired before completion; review its state before restarting')
+    changed = 0
+    reverse = {v: k for k, v in mapping.items()}
+    seen = set()
+    while not state['complete']:
+        params = {'country': 'in', 'catalogs': ','.join(mapping.values()), 'change_type': 'new',
+                  'item_type': 'show', 'from': state['from'], 'to': state['to'], 'order_direction': 'asc'}
+        if state['cursor']:
+            params['cursor'] = state['cursor']
+        page = client.get('/changes', params)
+        if not isinstance(page, dict) or not isinstance(page.get('hasMore'), bool) or not isinstance(page.get('shows'), dict) or not isinstance(page.get('changes'), list):
+            raise SyncError('Invalid recent-history page')
+        cursor = page.get('nextCursor')
+        if page['hasMore'] and (not isinstance(cursor, str) or not cursor or cursor == state['cursor'] or cursor in seen):
+            raise SyncError('Invalid recent-history pagination cursor')
+        for show in page['shows'].values():
+            normalize(show, mapping, now)
+        rows = []
+        for event in page['changes']:
+            if not isinstance(event, dict) or str(event.get('showId')) not in {str(k) for k in page['shows']}:
+                raise SyncError('Recent-history change lacks a show record')
+            timestamp = event.get('timestamp')
+            service = event.get('service', {}).get('id')
+            if not isinstance(timestamp, int) or not state['from'] <= timestamp <= state['to'] or service not in reverse:
+                raise SyncError('Recent-history event has invalid date or platform')
+            event_id = json.dumps([event.get('showId'), service, 'new', timestamp, event.get('link')])
+            rows.append((event_id, 'motn:' + str(event['showId']), reverse[service], 'new', timestamp))
+        # A validated page and its resume cursor are committed together.
+        for show in page['shows'].values():
+            changed += save_show(db, show, mapping, now)
+        db.executemany('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)', rows)
+        state = {**state, 'cursor': cursor if page['hasMore'] else None,
+                 'complete': not page['hasMore'], 'pages': state['pages'] + 1}
+        set_meta(db, 'recent_backfill_v1', state)
+        db.commit()
+        seen.add(cursor)
+    return changed
+
 def sync(db, client, now):
     coverage = get_meta(db, 'coverage')
     if not coverage or now - coverage['checkedAt'] >= DAY:
@@ -210,6 +258,7 @@ def sync(db, client, now):
     if not get_meta(db, 'baseline_complete'):
         set_meta(db, 'baseline_complete', now)
         db.commit()
+    changed += backfill_recent(db, client, mapping, now)
     # A separate watermark per change type avoids repeating successfully completed work.
     for change_type in ('new', 'updated', 'removed'):
         since = get_meta(db, 'watermark:' + change_type, started)
@@ -275,6 +324,7 @@ def report(db, now):
             'supportedPlatforms': list(coverage.get('mapping', {})), 'missingPlatforms': coverage.get('missing', list(PLATFORMS)),
             'lastSuccessfulUpdate': stamp(get_meta(db, 'last_success')) if get_meta(db, 'last_success') else None,
             'baselineComplete': bool(get_meta(db, 'baseline_complete')),
+            'recentHistory': get_meta(db, 'recent_backfill_v1'),
             'catalogScope': 'Initial popular-title sample plus subsequently detected show-level changes; not a full catalog or episode tracker.',
             'runs': [{'at': stamp(r[0]), 'status': r[1], 'requests': r[2], 'changedRecords': r[3], 'message': r[4]} for r in runs],
             'changesByPlatform': {name: db.execute('SELECT count(*) FROM events WHERE platform=?', (name,)).fetchone()[0] for name in PLATFORMS},
@@ -291,13 +341,16 @@ def export_catalog(db, path, now):
             continue
         title['firstObservedAt'] = first_seen
         title['lastCheckedAt'] = last_checked
-        # Baseline titles are never presented as newly added.
-        title['weeklyPlatforms'] = [row[0] for row in db.execute("SELECT DISTINCT platform FROM events WHERE title_id=? AND kind='new' AND at>=?", (title['id'], now - 7 * DAY))]
+        # Only provider-reported new events qualify, including explicitly fetched history.
+        recent = db.execute("SELECT platform,MAX(at) FROM events WHERE title_id=? AND kind='new' AND at>=? AND at<=? GROUP BY platform", (title['id'], now - 7 * DAY, now)).fetchall()
+        title['weeklyPlatforms'] = [row[0] for row in recent]
+        title['weeklyUpdatedAt'] = max((row[1] for row in recent), default=None)
         title['weekly'] = bool(title['weeklyPlatforms'])
         rows.append(title)
     output = {'schemaVersion': 1, 'mode': 'live', 'updatedAt': stamp(get_meta(db, 'last_success')),
               'scope': 'Popular-title sample plus tracked additions; search covers imported titles.',
               'coverage': report(db, now)['supportedPlatforms'], 'missingPlatforms': report(db, now)['missingPlatforms'],
+              'recentHistoryComplete': bool(get_meta(db, 'recent_backfill_v1', {}).get('complete')),
               'source': {'name': 'Streaming Availability API by Movie of the Night', 'url': 'https://www.movieofthenight.com/about/api'},
               'titles': rows}
     target = Path(path)
