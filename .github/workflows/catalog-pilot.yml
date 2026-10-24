@@ -16,7 +16,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
   actions: read
   pages: write
   id-token: write
@@ -85,16 +85,6 @@ jobs:
           report = json.loads(Path('reports/pilot.json').read_text())
           print('ready=' + str(report['runs'][-1]['status'] == 'success' and Path('data/catalog.json').exists()).lower())
           PYCODE
-      - name: Publish approved website catalog
-        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
-        run: |
-          if [[ ! -f data/catalog.json ]]; then exit 0; fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/catalog.json
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Refresh validated India streaming catalog'
-          git push
       - name: Prepare website-only Pages artifact
         if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
         run: |
