@@ -29,6 +29,19 @@ function element(tag, text, className) {
 function secureURL(value) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; } catch { return null; }
 }
+function formatLanguages(available) {
+  if (!available.length) return 'Unverified';
+  const preferred = languages.filter(language => available.includes(language));
+  if (preferred.length) {
+    const otherCount = available.length - preferred.length;
+    return preferred.join(' · ') + (otherCount ? ` · +${otherCount} other languages` : '');
+  }
+  const labels = available.map(language => {
+    try { return /^[a-z]{2,3}$/.test(language) ? new Intl.DisplayNames(['en'], {type:'language'}).of(language) : language; }
+    catch { return language; }
+  });
+  return labels.slice(0, 3).join(' · ') + (labels.length > 3 ? ` · +${labels.length - 3} other languages` : '');
+}
 function cardFor(title) {
   const card = element('article', undefined, 'card');
   const poster = element('div', undefined, 'poster');
@@ -60,8 +73,8 @@ function cardFor(title) {
     const link = secureURL(offer.link);
     const provider = element(link ? 'a' : 'div', label, 'provider');
     if (link) { provider.href = link; provider.target = '_blank'; provider.rel = 'noopener noreferrer'; }
-    section.append(provider, element('div', `Audio: ${offer.audio.join(' · ') || 'Unverified'}`, 'audio'),
-      element('div', `Subtitles: ${offer.subtitles.join(' · ') || 'Unverified'}`, 'audio'));
+    section.append(provider, element('div', `Audio: ${formatLanguages(offer.audio)}`, 'audio'),
+      element('div', `Subtitles: ${formatLanguages(offer.subtitles)}`, 'audio'));
     details.append(section);
   }
   if (liveCatalog) details.append(element('div', `Checked ${new Date(title.lastCheckedAt * 1000).toLocaleString('en-IN', {timeZone:'Asia/Kolkata'})} IST`, 'checked'));
