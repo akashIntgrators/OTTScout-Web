@@ -1,0 +1,113 @@
+name: OTTScout catalog pilot
+
+on:
+  schedule:
+    # UTC; 00:00, 06:00, 12:00 and 18:00 IST. GitHub may delay scheduled runs.
+    - cron: '30 0,6,12,18 * * *'
+  workflow_dispatch:
+    inputs:
+      initialize:
+        description: 'Start the 30-day pilot if no database exists (first run only)'
+        type: boolean
+        default: false
+      publish:
+        description: 'Publish validated catalog to the website after reviewing provider coverage and terms'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ottscout-catalog-pilot
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      STREAMING_API_KEY: ${{ secrets.STREAMING_API_KEY }}
+      STREAMING_API_MODE: ${{ vars.STREAMING_API_MODE || 'direct' }}
+      MONTHLY_REQUEST_LIMIT: ${{ vars.MONTHLY_REQUEST_LIMIT || '400' }}
+      RUN_REQUEST_LIMIT: ${{ vars.RUN_REQUEST_LIMIT || '12' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore pilot database
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: ottscout-pilot-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ottscout-pilot-v1-
+      - name: Check catalog and record usage
+        id: checker
+        shell: bash
+        env:
+          INITIALIZE: ${{ inputs.initialize }}
+        run: |
+          args=()
+          if [[ "$INITIALIZE" == 'true' ]]; then args+=(--initialize); fi
+          python scripts/catalog_sync.py "${args[@]}"
+      - name: Preserve pilot database, including request usage after failures
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: ottscout-pilot-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Write run summary
+        if: always()
+        run: python scripts/pilot_summary.py
+      - name: Keep usage report (contains no API key or raw catalog)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pilot-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/pilot.json
+          if-no-files-found: ignore
+          retention-days: 35
+      - name: Decide whether this run may publish
+        id: publication
+        if: success()
+        shell: bash
+        run: |
+          python - <<'PYCODE' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          report = json.loads(Path('reports/pilot.json').read_text())
+          print('ready=' + str(report['runs'][-1]['status'] == 'success' and Path('data/catalog.json').exists()).lower())
+          PYCODE
+      - name: Publish approved website catalog
+        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        run: |
+          if [[ ! -f data/catalog.json ]]; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/catalog.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Refresh validated India streaming catalog'
+          git push
+      - name: Prepare website-only Pages artifact
+        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        run: |
+          python scripts/build_site.py
+      - name: Configure Pages
+        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        uses: actions/configure-pages@v5
+      - name: Upload Pages website
+        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .site
+      - name: Deploy Pages website
+        id: deployment
+        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        uses: actions/deploy-pages@v4
