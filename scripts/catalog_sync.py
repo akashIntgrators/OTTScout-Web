@@ -113,8 +113,10 @@ def normalize(show, mapping, now):
 
 def save_show(db, show, mapping, now):
     body = normalize(show, mapping, now)
-    encoded = json.dumps(body, sort_keys=True, ensure_ascii=False)
     old = db.execute('SELECT body FROM titles WHERE id=?', (body['id'],)).fetchone()
+    if old and not body.get('originalLanguage'):
+        body['originalLanguage'] = json.loads(old[0]).get('originalLanguage')
+    encoded = json.dumps(body, sort_keys=True, ensure_ascii=False)
     changed = not old or old[0] != encoded
     db.execute('''INSERT INTO titles VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,last_checked=excluded.last_checked''',
                (body['id'], encoded, now, now))
@@ -221,6 +223,52 @@ def backfill_recent(db, client, mapping, now):
         set_meta(db, 'recent_backfill_v1', state)
         db.commit()
         seen.add(cursor)
+    return changed
+
+def backfill_original_languages(db, client, mapping, now, max_pages=2):
+    """The API omits original language from Show; use its explicit language filter."""
+    changed = 0
+    pages = 0
+    tasks = [(code, kind) for code in ('en','hi','te','ta','kn','ml') for kind in ('movie','series')]
+    start = get_meta(db, 'original_backfill_next', 0)
+    for offset in range(len(tasks)):
+        task_index = (start + offset) % len(tasks)
+        code, kind = tasks[task_index]
+        key = 'original_backfill_v1:' + code + ':' + kind
+        state = get_meta(db, key, {'cursor': None, 'complete': False, 'pages': 0})
+        seen = {state['cursor']} if state['cursor'] else set()
+        while not state['complete']:
+            if pages >= max_pages or getattr(client, 'calls', 0) >= getattr(client, 'run_limit', float('inf')):
+                return changed
+            params = {'country':'in', 'catalogs':','.join(mapping.values()), 'show_type':kind,
+                      'series_granularity':'show', 'order_by':'original_title',
+                      'order_direction':'asc', 'show_original_language':code}
+            if state['cursor']:
+                params['cursor'] = state['cursor']
+            try:
+                page = client.get('/shows/search/filters', params)
+            except BudgetReached:
+                return changed
+            if not isinstance(page, dict) or not isinstance(page.get('shows'), list) or not isinstance(page.get('hasMore'), bool):
+                raise SyncError('Invalid original-language page')
+            cursor = page.get('nextCursor')
+            if page['hasMore'] and (not isinstance(cursor, str) or not cursor or cursor in seen):
+                raise SyncError('Invalid original-language cursor')
+            shows = [{**show, 'originalLanguage':code} for show in page['shows'] if isinstance(show, dict)]
+            if len(shows) != len(page['shows']):
+                raise SyncError('Invalid original-language show')
+            for show in shows:
+                normalize(show, mapping, now)
+            for show in shows:
+                changed += save_show(db, show, mapping, now)
+            state = {'cursor':cursor if page['hasMore'] else None,
+                     'complete':not page['hasMore'], 'pages':state['pages']+1}
+            set_meta(db, key, state)
+            set_meta(db, 'original_backfill_next', (task_index + 1) % len(tasks))
+            db.commit()
+            pages += 1
+            seen.add(cursor)
+            break  # Share limited pages across languages on successive runs.
     return changed
 
 def backfill_catalog(db, client, mapping, now, max_pages=2):
@@ -342,6 +390,7 @@ def sync(db, client, now):
                        (event_id, 'motn:' + str(event['showId']), reverse[service_id], change_type, event['timestamp']))
         set_meta(db, 'watermark:' + change_type, now)
         db.commit()
+    changed += backfill_original_languages(db, client, mapping, now)
     changed += backfill_catalog(db, client, mapping, now)
     set_meta(db, 'last_success', now)
     db.commit()
