@@ -83,6 +83,21 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(title['originalLanguage'], 'Kannada')
         self.assertEqual(title['offers'][0]['audio'], ['Hindi'])
 
+    def test_filtered_original_import_uses_query_and_survives_refresh(self):
+        class OriginalPage:
+            calls = 0
+            def get(inner, endpoint, params):
+                self.assertEqual(params['show_original_language'], 'en')
+                return {'shows':[show('original')], 'hasMore':False}
+        sync.backfill_original_languages(self.db, OriginalPage(), {'Netflix':'netflix'}, NOW, max_pages=1)
+        body = json.loads(self.db.execute("SELECT body FROM titles WHERE id='motn:original'").fetchone()[0])
+        self.assertEqual(body['originalLanguage'], 'English')
+        self.assertEqual(body['offers'][0]['audio'], ['Hindi'])
+        sync.save_show(self.db, show('original'), {'Netflix':'netflix'}, NOW+100)
+        body = json.loads(self.db.execute("SELECT body FROM titles WHERE id='motn:original'").fetchone()[0])
+        self.assertEqual(body['originalLanguage'], 'English')
+        self.assertEqual(sync.get_meta(self.db, 'original_backfill_next'), 1)
+
     def test_audio_is_per_offer_and_unknown_not_inferred(self):
         result = show(services=('netflix', 'prime'))
         result['streamingOptions']['in'][1]['audios'] = []
