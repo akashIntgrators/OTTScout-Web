@@ -68,7 +68,7 @@ def build(root=ROOT, now=None):
                 link = safe_link(o.get('link'))
                 provider = f'<a href="{escape(link, quote=True)}" rel="noopener noreferrer">{escape(o["platform"])} ↗</a>' if link else escape(o['platform'])
                 rows.append(f'<li>{provider}<p>{escape(names.get(o.get("type"), "Offer unverified"))}{(" · " + escape(o["addon"])) if o.get("addon") else ""}</p><p>Audio: {escape(" · ".join(o["audio"]) or "Unverified")}</p><p>Subtitles: {escape(" · ".join(o.get("subtitles", [])) or "Unverified")}</p></li>')
-            page(title_path(t), f'{t["title"]} — where to watch in India', f'Find where to watch {t["title"]} in India, with platform-specific audio languages, subtitles and viewing options.', f'<p>{escape(str(t.get("year") or "Year unverified"))} · {escape(t["type"])}</p><h2>Where to watch</h2><ul class="seo-offers">'+''.join(rows)+'</ul>'+note)
+            page(title_path(t), f'{t["title"]} — where to watch in India', f'Find where to watch {t["title"]} in India, with platform-specific audio languages, subtitles and viewing options.', f'<p>{escape(str(t.get("year") or "Year unverified"))} · {escape(t["type"])}</p><p>Original language: {escape(t.get("originalLanguage") or "Unverified")}</p><h2>Where to watch</h2><ul class="seo-offers">'+''.join(rows)+'</ul>'+note)
     else:
         # Validation builds have no provider snapshot. Never invent indexable listings.
         print('No public catalogue snapshot; discovery pages will be generated during catalogue deployment.')

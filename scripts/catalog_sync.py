@@ -20,6 +20,9 @@ PLATFORMS = {
 LANGUAGES = {'eng': 'English', 'en': 'English', 'hin': 'Hindi', 'hi': 'Hindi',
              'tel': 'Telugu', 'te': 'Telugu', 'tam': 'Tamil', 'ta': 'Tamil',
              'kan': 'Kannada', 'kn': 'Kannada', 'mal': 'Malayalam', 'ml': 'Malayalam'}
+# Verified correction: provider audio is Hindi, but the film's original is Kannada.
+# https://tv.apple.com/in/movie/dr-56/umc.cmc.48r2rpynxx4gtg53d94qc7aki
+ORIGINAL_LANGUAGE_CORRECTIONS = {'motn:57489': 'Kannada'}
 DAY = 86400
 
 class SyncError(Exception):
@@ -103,6 +106,7 @@ def normalize(show, mapping, now):
             'type': 'Movie' if show['showType'] == 'movie' else 'Series',
             'year': show.get('releaseYear') or show.get('firstAirYear'),
             'overview': show.get('overview', ''),
+            'originalLanguage': LANGUAGES.get(show.get('originalLanguage', '').lower(), show.get('originalLanguage')) if isinstance(show.get('originalLanguage'), str) else None,
             'genres': [g['name'] for g in show.get('genres', []) if isinstance(g, dict) and isinstance(g.get('name'), str)],
             'poster': safe_url(poster.get('w480') or poster.get('w360')),
             'offers': sorted(offers, key=lambda x: (x['platform'], x['type'], x['link'] or ''))}
@@ -219,6 +223,50 @@ def backfill_recent(db, client, mapping, now):
         seen.add(cursor)
     return changed
 
+def backfill_catalog(db, client, mapping, now, max_pages=2):
+    """Import older streaming titles gradually, committing each page with its cursor."""
+    changed = 0
+    pages = 0
+    for platform, service in mapping.items():
+        for kind in ('movie', 'series'):
+            key = 'catalog_backfill_v1:' + service + ':' + kind
+            state = get_meta(db, key, {'cursor': None, 'complete': False, 'pages': 0})
+            seen = {state['cursor']} if state['cursor'] else set()
+            while not state['complete']:
+                if pages >= max_pages or getattr(client, 'calls', 0) >= getattr(client, 'run_limit', float('inf')):
+                    return changed
+                params = {'country': 'in', 'catalogs': service, 'show_type': kind,
+                          'series_granularity': 'show', 'order_by': 'original_title', 'order_direction': 'asc'}
+                if state['cursor']:
+                    params['cursor'] = state['cursor']
+                try:
+                    page = client.get('/shows/search/filters', params)
+                except BudgetReached:
+                    return changed
+                if not isinstance(page, dict) or not isinstance(page.get('shows'), list) or not isinstance(page.get('hasMore'), bool):
+                    raise SyncError('Invalid catalog backfill page')
+                cursor = page.get('nextCursor')
+                if page['hasMore'] and (not isinstance(cursor, str) or not cursor or cursor in seen):
+                    raise SyncError('Invalid catalog backfill cursor')
+                for show in page['shows']:
+                    normalize(show, mapping, now)
+                for show in page['shows']:
+                    changed += save_show(db, show, mapping, now)
+                state = {'cursor': cursor if page['hasMore'] else None,
+                         'complete': not page['hasMore'], 'pages': state['pages'] + 1}
+                set_meta(db, key, state)
+                db.commit()
+                pages += 1
+                seen.add(cursor)
+    return changed
+
+def catalog_backfill_status(db, mapping):
+    tasks = [get_meta(db, 'catalog_backfill_v1:' + service + ':' + kind, {})
+             for service in mapping.values() for kind in ('movie', 'series')]
+    return {'complete': bool(tasks) and all(task.get('complete') for task in tasks),
+            'completedTasks': sum(bool(task.get('complete')) for task in tasks),
+            'totalTasks': len(tasks), 'pages': sum(task.get('pages', 0) for task in tasks)}
+
 def sync(db, client, now):
     coverage = get_meta(db, 'coverage')
     if not coverage or now - coverage['checkedAt'] >= DAY:
@@ -294,6 +342,7 @@ def sync(db, client, now):
                        (event_id, 'motn:' + str(event['showId']), reverse[service_id], change_type, event['timestamp']))
         set_meta(db, 'watermark:' + change_type, now)
         db.commit()
+    changed += backfill_catalog(db, client, mapping, now)
     set_meta(db, 'last_success', now)
     db.commit()
     return changed
@@ -336,6 +385,8 @@ def export_catalog(db, path, now):
     rows = []
     for raw, first_seen, last_checked in db.execute('SELECT body,first_seen,last_checked FROM titles ORDER BY id'):
         title = json.loads(raw)
+        if title['id'] in ORIGINAL_LANGUAGE_CORRECTIONS:
+            title['originalLanguage'] = ORIGINAL_LANGUAGE_CORRECTIONS[title['id']]
         # Exclude unknown or non-target audio rather than infer dubbing from original language.
         if not any(language in LANGUAGES.values() for offer in title['offers'] for language in offer['audio']):
             continue
@@ -348,7 +399,8 @@ def export_catalog(db, path, now):
         title['weekly'] = bool(title['weeklyPlatforms'])
         rows.append(title)
     output = {'schemaVersion': 1, 'mode': 'live', 'updatedAt': stamp(get_meta(db, 'last_success')),
-              'scope': 'Popular-title sample plus tracked additions; search covers imported titles.',
+              'scope': 'Gradually expanded streaming catalog plus tracked additions; search covers imported titles.',
+              'catalogBackfill': catalog_backfill_status(db, get_meta(db, 'coverage', {}).get('mapping', {})),
               'coverage': report(db, now)['supportedPlatforms'], 'missingPlatforms': report(db, now)['missingPlatforms'],
               'recentHistoryComplete': bool(get_meta(db, 'recent_backfill_v1', {}).get('complete')),
               'source': {'name': 'Streaming Availability API by Movie of the Night', 'url': 'https://www.movieofthenight.com/about/api'},
