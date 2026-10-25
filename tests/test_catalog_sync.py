@@ -37,7 +37,7 @@ class FakeClient:
             result = show()
             result['showType'] = params['show_type']
             result['id'] = params['show_type']
-            return {'shows': [result], 'hasMore': True, 'nextCursor': 'more'}
+            return {'shows': [result], 'hasMore': params.get('order_by') != 'original_title', 'nextCursor': 'more'}
         return {'changes': [], 'shows': {}, 'hasMore': False}
 
 class CatalogTests(unittest.TestCase):
@@ -48,6 +48,41 @@ class CatalogTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.temp.cleanup()
+    def test_original_language_is_distinct_from_dubbed_offer(self):
+        result = show()
+        result['originalLanguage'] = 'kn'
+        normalized = sync.normalize(result, {'Netflix':'netflix'}, NOW)
+        self.assertEqual(normalized['originalLanguage'], 'Kannada')
+        self.assertEqual(normalized['offers'][0]['audio'], ['Hindi'])
+        self.assertIsNone(sync.normalize(show(), {'Netflix':'netflix'}, NOW)['originalLanguage'])
+
+    def test_full_catalog_resumes_and_does_not_create_weekly_events(self):
+        class Pages:
+            calls = 0
+            run_limit = 10
+            def get(inner, endpoint, params):
+                inner.calls += 1
+                if not params.get('cursor'):
+                    return {'shows':[show('older')], 'hasMore':True, 'nextCursor':'page2'}
+                self.assertEqual(params['cursor'], 'page2')
+                return {'shows':[show('oldest')], 'hasMore':False}
+        client = Pages()
+        sync.backfill_catalog(self.db, client, {'Netflix':'netflix'}, NOW, max_pages=1)
+        self.assertEqual(sync.get_meta(self.db, 'catalog_backfill_v1:netflix:movie')['cursor'], 'page2')
+        sync.backfill_catalog(self.db, client, {'Netflix':'netflix'}, NOW, max_pages=1)
+        self.assertTrue(sync.get_meta(self.db, 'catalog_backfill_v1:netflix:movie')['complete'])
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0], 2)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0], 0)
+
+    def test_existing_dr56_is_corrected_without_changing_offer_audio(self):
+        sync.save_show(self.db, show('57489'), {'Netflix':'netflix'}, NOW)
+        sync.set_meta(self.db, 'last_success', NOW)
+        path = self.root / 'catalog.json'
+        sync.export_catalog(self.db, path, NOW)
+        title = json.loads(path.read_text())['titles'][0]
+        self.assertEqual(title['originalLanguage'], 'Kannada')
+        self.assertEqual(title['offers'][0]['audio'], ['Hindi'])
+
     def test_audio_is_per_offer_and_unknown_not_inferred(self):
         result = show(services=('netflix', 'prime'))
         result['streamingOptions']['in'][1]['audios'] = []

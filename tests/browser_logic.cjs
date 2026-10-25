@@ -1,0 +1,20 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('app.js','utf8').split("for (const kind of ['platforms','languages']) renderOptions(kind);")[0];
+const context = vm.createContext({localStorage:{getItem:()=>null},document:{},console,Intl,URL});
+vm.runInContext(source,context);
+vm.runInContext(`
+view='discover'; originalOnly=true;
+const dubbed = {originalLanguage:'Kannada',offers:[{platform:'JioHotstar',audio:['Hindi'],type:'subscription'}]};
+const original = {originalLanguage:'Kannada',offers:[{platform:'JioHotstar',audio:['Kannada','Hindi'],type:'subscription'}]};
+const unknown = {offers:[{platform:'JioHotstar',audio:['Hindi'],type:'subscription'}]};
+if(matchingOffers(dubbed).length!==0)throw Error('Dubbed-only offer included');
+if(matchingOffers(original).length!==1)throw Error('Original audio excluded');
+if(matchingOffers(unknown).length!==0)throw Error('Unknown original included');
+selectedLanguages.clear();selectedLanguages.add('Hindi');
+if(matchingOffers(original).length!==0)throw Error('Selected Hindi matched Kannada original');
+originalOnly=false;
+if(matchingOffers(dubbed).length!==1)throw Error('Normal audio filter failed');
+`,context);
+console.log('Original audio filter: five scenarios passed.');
