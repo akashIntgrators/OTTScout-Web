@@ -51,7 +51,10 @@ References:
 
 
 ## Original audio and older-title search
-The provider's `originalLanguage` is retained separately from each offer's audio.
+The provider's Show response omits original language. Two resumable pages per run
+use its documented `show_original_language` filter to identify originals for our
+six supported languages. That explicit query result is retained separately from
+each offer's audio and preserved during ordinary metadata refreshes.
 Original language only matches an offer when a selected audio language equals the
 title's reported original language. Missing metadata stays Unverified. No language
 is inferred from a title, country, or the first listed audio track.
@@ -59,8 +62,7 @@ is inferred from a title, country, or the first listed audio track.
 After normal change tracking, each successful run imports up to two complete pages
 of older catalog titles using alphabetical pagination, across each covered service
 and movies/series. Each validated page and cursor are committed together; existing
-request limits still apply. Imports also refresh original-language metadata on
-existing titles. Imports never create weekly-addition events. The public snapshot
+request limits still apply. Language-filtered imports also refresh original metadata on existing titles. Imports never create weekly-addition events. The public snapshot
 reports progress and search automatically searches Discover when typing from This
 week. This imports older titles currently streaming, not a historical record of
 removed offers or every movie ever made. Completion depends on provider coverage,
