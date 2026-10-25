@@ -128,7 +128,7 @@ function cardFor(title) {
   const heading = element('h3', undefined, 'card-title');
   const name = element(liveCatalog ? 'a' : 'span', title.title);
   if (liveCatalog) name.href = '/titles/' + encodeURIComponent(title.id.replace(/^motn:/, '')) + '/';
-  heading.append(name, document.createTextNode(' '), element('span', '· ' + formatLanguages(audio), 'card-languages'));
+  heading.append(name, document.createTextNode(' '), element('span', '· Audio: ' + formatLanguages(audio), 'card-languages'));
   body.append(heading, element('div', 'Original language: ' + formatLanguages(title.originalLanguage ? [title.originalLanguage] : []), 'original-language'));
   if (view !== 'watchlist') {
     const dismiss = element('button', 'Hide title', 'dismiss-title');
