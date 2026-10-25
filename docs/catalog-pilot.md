@@ -48,3 +48,26 @@ References:
 - https://docs.movieofthenight.com/resource/changes
 - https://github.com/movieofthenight/streaming-availability-api/blob/main/TERMS.md
 - https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching
+
+
+## Original audio and older-title search
+The provider's `originalLanguage` is retained separately from each offer's audio.
+Original language only matches an offer when a selected audio language equals the
+title's reported original language. Missing metadata stays Unverified. No language
+is inferred from a title, country, or the first listed audio track.
+
+After normal change tracking, each successful run imports up to two complete pages
+of older catalog titles using alphabetical pagination, across each covered service
+and movies/series. Each validated page and cursor are committed together; existing
+request limits still apply. Imports also refresh original-language metadata on
+existing titles. Imports never create weekly-addition events. The public snapshot
+reports progress and search automatically searches Discover when typing from This
+week. This imports older titles currently streaming, not a historical record of
+removed offers or every movie ever made. Completion depends on provider coverage,
+request budget, retained state, and the 30-day pilot window.
+
+Hidden titles and the original-audio preference are saved in this browser. Restore
+hidden titles clears dismissals; the watchlist remains accessible.
+
+Dr. 56 (`motn:57489`) has a verified Kannada original-language correction, applied
+also to previously imported records. Source: https://tv.apple.com/in/movie/dr-56/umc.cmc.48r2rpynxx4gtg53d94qc7aki . Its Hindi JioHotstar offer remains Hindi.
