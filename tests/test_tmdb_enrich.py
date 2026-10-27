@@ -60,3 +60,18 @@ class MetadataTests(unittest.TestCase):
     def test_unknown_language_not_derived_from_audio(self):
         result=tmdb.lookup({**TITLE,'tmdbId':77},Fake({'/movie/77':{**DETAILS,'original_language':None}}))
         self.assertIsNone(result['originalLanguage'])
+
+    def test_changed_external_ids_get_priority_and_invalidate_cached_miss(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=tmdb.open_cache(Path(folder)/'cache.sqlite')
+            legacy=copy.deepcopy(TITLE)
+            tmdb.enrich({'titles':[legacy]},db,Fake({'/search/movie':{'results':[]}}),1000)
+            repaired={**TITLE,'tmdbId':'movie/77'}
+            catalog={'titles':[{**TITLE,'id':'motn:8','tmdbId':'movie/78'},repaired]}
+            client=Fake({'/movie/77':DETAILS},limit=1)
+            result=tmdb.enrich(catalog,db,client,1001,priority_ids=['motn:7'])
+            self.assertEqual(repaired['originalLanguage'],'Kannada')
+            self.assertEqual(repaired['tmdbMatchStatus'],'matched')
+            self.assertEqual(result['matched'],1)
+            self.assertEqual(catalog['titles'][0]['tmdbMatchStatus'],'pending')
+            db.close()
