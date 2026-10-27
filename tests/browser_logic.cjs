@@ -17,4 +17,16 @@ if(matchingOffers(original).length!==0)throw Error('Selected Hindi matched Kanna
 originalOnly=false;
 if(matchingOffers(dubbed).length!==1)throw Error('Normal audio filter failed');
 `,context);
-console.log('Original audio filter: five scenarios passed.');
+vm.runInContext(`
+selectedGenres=new Set(['Drama']);
+if(!matchingGenres({tmdb:{genres:['Drama','Thriller']}}))throw Error('Matching genre excluded');
+if(matchingGenres({tmdb:{genres:['Comedy']}}))throw Error('Wrong genre included');
+if(matchingGenres({genres:['Drama']}))throw Error('Provider genre passed as TMDB');
+selectedGenres=new Set(['Unverified']);
+if(!matchingGenres({}))throw Error('Unknown genre filter failed');
+selectedGenres=new Set();
+if(matchingGenres({tmdb:{genres:['Drama']}}))throw Error('Empty genres matched');
+selectedGenres=null;
+if(!matchingGenres({}))throw Error('All genres excluded unknown');
+`,context);
+console.log('Original audio and genre filter scenarios passed.');
