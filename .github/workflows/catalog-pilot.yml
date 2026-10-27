@@ -10,6 +10,11 @@ on:
         description: 'Start the 30-day pilot if no database exists (first run only)'
         type: boolean
         default: false
+      catalog_pages:
+        description: 'Older catalogue pages to import, shared across platforms; existing API limits still apply'
+        type: choice
+        options: ['2', '6']
+        default: '2'
       metadata_only:
         description: 'Refresh TMDB metadata using cached streaming data; no streaming API requests'
         type: boolean
@@ -45,6 +50,7 @@ jobs:
       STREAMING_API_MODE: ${{ vars.STREAMING_API_MODE || 'direct' }}
       MONTHLY_REQUEST_LIMIT: ${{ vars.MONTHLY_REQUEST_LIMIT || '400' }}
       RUN_REQUEST_LIMIT: ${{ vars.RUN_REQUEST_LIMIT || '12' }}
+      CATALOG_BACKFILL_PAGES: ${{ inputs.catalog_pages || vars.CATALOG_BACKFILL_PAGES || '2' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
