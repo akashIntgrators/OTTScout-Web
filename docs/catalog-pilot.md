@@ -85,3 +85,13 @@ The SQLite cache `.state/tmdb.sqlite` shares the existing private Actions cache.
 Genres use TMDB data only, with an explicit Unverified option; selecting several genres matches any. All genres includes unverified titles. Original-language values retain their source; unmatched titles keep existing verified provider originals. TMDB reports one original-language field, which is not a complete list of a multilingual production's original languages.
 
 The public snapshot includes matched TMDB ID, match method, check timestamp, original language and genres; no access token. Credits appear on the dashboard and title/language pages. Confirm appropriate TMDB commercial licensing before enabling advertising; developer access is for non-commercial use. See https://developer.themoviedb.org/docs/faq.
+
+## Discovery filters and corrections
+
+The dashboard has independent **Originally** and **Watch in** checkbox dropdowns. Originally filters the title's known original language; Watch in filters audio on the selected platform's offer. Both match any selected choice within their own group, and groups combine with AND. Original audio only additionally requires that matching offer to carry the title's original audio. Existing original-audio preferences are preserved. Unverified originals are selectable explicitly; non-target original languages are grouped under Other languages.
+
+Included with subscription accepts only base `subscription` offers without an add-on. It excludes free, rent, buy and addon offers. Active-filter chips clear one filter group; Reset filters clears all groups. Watchlist and hidden-title state are unaffected.
+
+Each card's Where to watch section opens a correction dialog. The visitor can choose an issue type and platform, add a correction/source, review a generated public-data report, copy it, or open a prefilled public GitHub issue. GitHub requires sign-in and a separate submit action; the site never silently submits a report. Individual title pages also link to a prefilled issue. No email, browser storage, API token or personal identifier is included automatically.
+
+A manual **metadata_only** workflow run exports the previously validated streaming snapshot and refreshes TMDB data without calling the streaming provider. It does not update the streaming-data timestamp. The normal six-hour workflow remains unchanged. Explicit metadata-ID repairs are disabled in this mode because those require streaming requests. Known provider IDs are prioritised to improve matching and avoid unnecessary text searches. Coverage reports distinguish pending and unmatched TMDB records and count known original languages.
