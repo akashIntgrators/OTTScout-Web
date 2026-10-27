@@ -70,6 +70,8 @@ class CatalogTests(unittest.TestCase):
         sync.backfill_catalog(self.db, client, {'Netflix':'netflix'}, NOW, max_pages=1)
         self.assertEqual(sync.get_meta(self.db, 'catalog_backfill_v1:netflix:movie')['cursor'], 'page2')
         sync.backfill_catalog(self.db, client, {'Netflix':'netflix'}, NOW, max_pages=1)
+        self.assertEqual(sync.get_meta(self.db, 'catalog_backfill_v1:netflix:series')['cursor'], 'page2')
+        sync.backfill_catalog(self.db, client, {'Netflix':'netflix'}, NOW, max_pages=1)
         self.assertTrue(sync.get_meta(self.db, 'catalog_backfill_v1:netflix:movie')['complete'])
         self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0], 2)
         self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0], 0)
@@ -265,6 +267,35 @@ class CatalogTests(unittest.TestCase):
         with patch.object(sys,'argv',['catalog_sync.py','--db',str(self.root/'state.sqlite'),'--export-cached','--export',str(target),'--report',str(self.root/'report.json')]), patch.object(sync.Client,'get',side_effect=AssertionError('Provider called')):
             self.assertEqual(sync.main(),0)
         self.assertEqual(json.loads(target.read_text())['titles'][0]['title'],'A real-looking test fixture')
+
+    def test_catalog_rotation_reaches_every_platform_and_type(self):
+        requested=[]
+        class Pages:
+            calls=0
+            run_limit=100
+            def get(inner,endpoint,params):
+                inner.calls+=1
+                requested.append((params['catalogs'],params['show_type']))
+                return {'shows':[],'hasMore':True,'nextCursor':str(inner.calls)}
+        mapping={'Netflix':'netflix','Prime Video':'prime','JioHotstar':'hotstar','ZEE5':'zee5','SonyLIV':'sonyliv'}
+        client=Pages()
+        for _ in range(5):sync.backfill_catalog(self.db,client,mapping,NOW,max_pages=2)
+        self.assertEqual(len(requested),10)
+        self.assertEqual(set(requested),{(service,kind) for service in mapping.values() for kind in ('movie','series')})
+        status=sync.catalog_backfill_status(self.db,mapping)
+        self.assertEqual(status['platforms']['Prime Video'],{'movie':1,'series':1})
+        self.assertFalse(status['complete'])
+
+    def test_catalog_rotation_keeps_old_cursor_and_rejects_invalid_page(self):
+        sync.set_meta(self.db,'catalog_backfill_v1:netflix:movie',{'pages':22,'complete':False,'cursor':'saved'})
+        class Broken:
+            def get(inner,endpoint,params):
+                self.assertEqual(params['cursor'],'saved')
+                return {'shows':[show('bad')],'hasMore':True,'nextCursor':'saved'}
+        with self.assertRaises(sync.SyncError):sync.backfill_catalog(self.db,Broken(),{'Netflix':'netflix'},NOW)
+        self.assertEqual(sync.get_meta(self.db,'catalog_backfill_v1:netflix:movie')['pages'],22)
+        self.assertIsNone(sync.get_meta(self.db,'catalog_backfill_next'))
+        self.assertIsNone(self.db.execute("SELECT id FROM titles WHERE id='motn:bad'").fetchone())
 
 if __name__ == '__main__':
     unittest.main()
