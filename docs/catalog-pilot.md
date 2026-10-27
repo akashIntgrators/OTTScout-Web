@@ -73,3 +73,15 @@ hidden titles clears dismissals; the watchlist remains accessible.
 
 Dr. 56 (`motn:57489`) has a verified Kannada original-language correction, applied
 also to previously imported records. Source: https://tv.apple.com/in/movie/dr-56/umc.cmc.48r2rpynxx4gtg53d94qc7aki . Its Hindi JioHotstar offer remains Hindi.
+
+## TMDB original-language and genre enrichment
+
+Add the **API Read Access Token** as the Actions secret `TMDB_READ_ACCESS_TOKEN`. It is available only to the enrichment step, never browser JavaScript. TMDB supplies `original_language` and genres; streaming-platform audio remains independent. The original-only switch still requires that the original audio is actually available in the selected offer.
+
+`scripts/tmdb_enrich.py` runs after a successful streaming sync, before saving `.state` and building the public website. It preserves provider TMDB/IMDb IDs for future updates and uses those where available. Older records without IDs require a unique exact title and release/first-air year; ambiguous matches stay unverified. No fuzzy first-result matching.
+
+The SQLite cache `.state/tmdb.sqlite` shares the existing private Actions cache. Positive results refresh after 30 days and unmatched results after 7 days. `TMDB_RUN_REQUEST_LIMIT` defaults to **300 requests per run**, independent of the streaming API budget. A title search plus details costs two requests; a direct TMDB ID costs one. Latest additions get priority. Initial coverage builds over successive successful runs. API errors stop the batch without retries, keep cached metadata, and do not block valid streaming updates. Cache eviction may require re-enrichment.
+
+Genres use TMDB data only, with an explicit Unverified option; selecting several genres matches any. All genres includes unverified titles. Original-language values retain their source; unmatched titles keep existing verified provider originals. TMDB reports one original-language field, which is not a complete list of a multilingual production's original languages.
+
+The public snapshot includes matched TMDB ID, match method, check timestamp, original language and genres; no access token. Credits appear on the dashboard and title/language pages. Confirm appropriate TMDB commercial licensing before enabling advertising; developer access is for non-commercial use. See https://developer.themoviedb.org/docs/faq.
