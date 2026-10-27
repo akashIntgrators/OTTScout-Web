@@ -116,16 +116,16 @@ def open_cache(path):
     db.execute('CREATE TABLE IF NOT EXISTS metadata (id TEXT PRIMARY KEY, identity TEXT NOT NULL, checked INTEGER NOT NULL, body TEXT)')
     return db
 
-def enrich(catalog, db, client, now):
+def enrich(catalog, db, client, now, priority_ids=()):
     titles = catalog['titles']
     cached = {row[0]:row[1:] for row in db.execute('SELECT id,identity,checked,body FROM metadata')}
     pending = []
     for title in titles:
         row = cached.get(title['id'])
-        if not row or row[0] != identity(title) or now-row[1] >= (30*DAY if row[2] else 7*DAY):
+        if title['id'] in priority_ids or not row or row[0] != identity(title) or now-row[1] >= (30*DAY if row[2] else 7*DAY):
             pending.append(title)
     # Latest weekly additions first, then remaining uncached titles, then expired entries.
-    pending.sort(key=lambda t:(t['id'] in cached, -(t.get('weeklyUpdatedAt') or 0), t['id']))
+    pending.sort(key=lambda t:(t['id'] not in priority_ids, t['id'] in cached, -(t.get('weeklyUpdatedAt') or 0), t['id']))
     status, message = ('ready','TMDB batch completed') if client else ('missing-token','TMDB token not configured; no requests made')
     if client:
         for title in pending:
@@ -144,9 +144,11 @@ def enrich(catalog, db, client, now):
     matched = 0
     for title in titles:
         row = cached.get(title['id'])
+        title['tmdbMatchStatus'] = 'unmatched' if row and row[0] == identity(title) and not row[2] else 'pending'
         title['originalLanguageSource'] = 'Streaming Availability API' if title.get('originalLanguage') else None
         if row and row[0] == identity(title) and row[2]:
             metadata = json.loads(row[2])
+            title['tmdbMatchStatus'] = 'matched'
             title['tmdb'] = {**metadata, 'checkedAt':row[1]}
             title['originalLanguage'] = metadata['originalLanguage']
             title['originalLanguageSource'] = 'TMDB' if metadata['originalLanguage'] else None
@@ -155,6 +157,50 @@ def enrich(catalog, db, client, now):
                                'requestsThisRun':client.calls if client else 0,'checkedAt':now}
     return catalog['tmdbEnrichment']
 
+def repair_external_ids(catalog, requested, now):
+    """Explicit manual repair for legacy rows, within the existing streaming budget."""
+    ids = [value.strip() for value in requested.split(',') if value.strip()]
+    if len(ids) > 5 or any(not re.fullmatch(r'motn:[0-9]+', value) for value in ids):
+        raise TMDBError('Metadata repair accepts at most five motn:numeric IDs')
+    if not ids:
+        return []
+    import catalog_sync as streaming
+    db = streaming.open_db('.state/catalog.sqlite')
+    latest = db.execute('SELECT id,requests FROM runs ORDER BY id DESC LIMIT 1').fetchone()
+    remaining = max(0,int(os.environ.get('RUN_REQUEST_LIMIT','12')) - (latest[1] if latest else 12))
+    client = streaming.Client(db,os.environ.get('STREAMING_API_KEY',''),os.environ.get('STREAMING_API_MODE','direct'),
+                              int(os.environ.get('MONTHLY_REQUEST_LIMIT','400')), remaining)
+    repaired = []
+    try:
+        for title in catalog['titles']:
+            if title['id'] not in ids or (title.get('tmdbId') and title.get('imdbId')):
+                continue
+            show = client.get('/shows/' + title['id'][5:], {'country':'in'})
+            normalized = streaming.normalize(show,streaming.get_meta(db,'coverage',{}).get('mapping',{}),now)
+            if normalized['id'] != title['id']:
+                raise TMDBError('Provider ID repair returned a different title')
+            raw = db.execute('SELECT body FROM titles WHERE id=?',(title['id'],)).fetchone()
+            if not raw:
+                continue
+            body = json.loads(raw[0])
+            for key in ('tmdbId','imdbId'):
+                if normalized.get(key):
+                    title[key] = body[key] = normalized[key]
+            db.execute('UPDATE titles SET body=? WHERE id=?',(json.dumps(body,sort_keys=True,ensure_ascii=False),title['id']))
+            db.commit()
+            repaired.append(title['id'])
+    except streaming.SyncError:
+        print('Legacy ID repair stopped at provider/request limit; existing availability preserved')
+    finally:
+        if latest:
+            db.execute('UPDATE runs SET requests=requests+? WHERE id=?',(client.calls,latest[0]))
+            db.commit()
+        report = Path('reports/pilot.json')
+        report.parent.mkdir(parents=True,exist_ok=True)
+        report.write_text(json.dumps(streaming.report(db,now),indent=2))
+        db.close()
+    return repaired
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--catalog', default='data/catalog.json')
@@ -162,11 +208,15 @@ def main():
     args = parser.parse_args()
     source = Path(args.catalog)
     catalog = json.loads(source.read_text())
+    now = int(time.time())
+    requested = os.environ.get('TMDB_REFRESH_IDS','')
+    if requested:
+        repair_external_ids(catalog, requested, now)
     token = os.environ.get('TMDB_READ_ACCESS_TOKEN')
     client = Client(token, int(os.environ.get('TMDB_RUN_REQUEST_LIMIT','300'))) if token else None
     db = open_cache(args.cache)
     try:
-        summary = enrich(catalog,db,client,int(time.time()))
+        summary = enrich(catalog,db,client,now,tuple(value.strip() for value in requested.split(',')))
     finally:
         db.close()
     temp = source.with_suffix('.tmp')
