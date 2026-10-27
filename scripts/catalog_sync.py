@@ -277,40 +277,44 @@ def backfill_original_languages(db, client, mapping, now, max_pages=2):
     return changed
 
 def backfill_catalog(db, client, mapping, now, max_pages=2):
-    """Import older streaming titles gradually, committing each page with its cursor."""
+    """Share catalogue pages fairly across platforms and content types, preserving cursors."""
     changed = 0
     pages = 0
-    for platform, service in mapping.items():
-        for kind in ('movie', 'series'):
-            key = 'catalog_backfill_v1:' + service + ':' + kind
-            state = get_meta(db, key, {'cursor': None, 'complete': False, 'pages': 0})
-            seen = {state['cursor']} if state['cursor'] else set()
-            while not state['complete']:
-                if pages >= max_pages or getattr(client, 'calls', 0) >= getattr(client, 'run_limit', float('inf')):
-                    return changed
-                params = {'country': 'in', 'catalogs': service, 'show_type': kind,
-                          'series_granularity': 'show', 'order_by': 'original_title', 'order_direction': 'asc'}
-                if state['cursor']:
-                    params['cursor'] = state['cursor']
-                try:
-                    page = client.get('/shows/search/filters', params)
-                except BudgetReached:
-                    return changed
-                if not isinstance(page, dict) or not isinstance(page.get('shows'), list) or not isinstance(page.get('hasMore'), bool):
-                    raise SyncError('Invalid catalog backfill page')
-                cursor = page.get('nextCursor')
-                if page['hasMore'] and (not isinstance(cursor, str) or not cursor or cursor in seen):
-                    raise SyncError('Invalid catalog backfill cursor')
-                for show in page['shows']:
-                    normalize(show, mapping, now)
-                for show in page['shows']:
-                    changed += save_show(db, show, mapping, now)
-                state = {'cursor': cursor if page['hasMore'] else None,
-                         'complete': not page['hasMore'], 'pages': state['pages'] + 1}
-                set_meta(db, key, state)
-                db.commit()
-                pages += 1
-                seen.add(cursor)
+    tasks = [(platform,service,kind) for kind in ('movie','series') for platform,service in mapping.items()]
+    if not tasks:
+        return 0
+    start = get_meta(db, 'catalog_backfill_next', 0) % len(tasks)
+    for offset in range(len(tasks)):
+        task_index = (start + offset) % len(tasks)
+        platform, service, kind = tasks[task_index]
+        key = 'catalog_backfill_v1:' + service + ':' + kind
+        state = get_meta(db, key, {'cursor': None, 'complete': False, 'pages': 0})
+        if state['complete']:
+            continue
+        if pages >= max_pages or getattr(client,'calls',0) >= getattr(client,'run_limit',float('inf')):
+            return changed
+        params = {'country':'in','catalogs':service,'show_type':kind,'series_granularity':'show',
+                  'order_by':'original_title','order_direction':'asc'}
+        if state['cursor']:
+            params['cursor'] = state['cursor']
+        try:
+            page = client.get('/shows/search/filters',params)
+        except BudgetReached:
+            return changed
+        if not isinstance(page,dict) or not isinstance(page.get('shows'),list) or not isinstance(page.get('hasMore'),bool):
+            raise SyncError('Invalid catalog backfill page')
+        cursor = page.get('nextCursor')
+        if page['hasMore'] and (not isinstance(cursor,str) or not cursor or cursor == state['cursor']):
+            raise SyncError('Invalid catalog backfill cursor')
+        for show in page['shows']:
+            normalize(show,mapping,now)
+        for show in page['shows']:
+            changed += save_show(db,show,mapping,now)
+        state = {'cursor':cursor if page['hasMore'] else None,'complete':not page['hasMore'],'pages':state['pages']+1}
+        set_meta(db,key,state)
+        set_meta(db,'catalog_backfill_next',(task_index+1)%len(tasks))
+        db.commit()
+        pages += 1
     return changed
 
 def catalog_backfill_status(db, mapping):
@@ -318,7 +322,8 @@ def catalog_backfill_status(db, mapping):
              for service in mapping.values() for kind in ('movie', 'series')]
     return {'complete': bool(tasks) and all(task.get('complete') for task in tasks),
             'completedTasks': sum(bool(task.get('complete')) for task in tasks),
-            'totalTasks': len(tasks), 'pages': sum(task.get('pages', 0) for task in tasks)}
+            'totalTasks': len(tasks), 'pages': sum(task.get('pages', 0) for task in tasks),
+            'platforms': {platform:{kind:get_meta(db,'catalog_backfill_v1:'+service+':'+kind,{'pages':0,'complete':False})['pages'] for kind in ('movie','series')} for platform,service in mapping.items()}}
 
 def sync(db, client, now):
     coverage = get_meta(db, 'coverage')
@@ -396,7 +401,7 @@ def sync(db, client, now):
         set_meta(db, 'watermark:' + change_type, now)
         db.commit()
     changed += backfill_original_languages(db, client, mapping, now)
-    changed += backfill_catalog(db, client, mapping, now)
+    changed += backfill_catalog(db, client, mapping, now, max_pages=max(0,min(6,int(os.environ.get('CATALOG_BACKFILL_PAGES','2')))))
     set_meta(db, 'last_success', now)
     db.commit()
     return changed
@@ -428,7 +433,8 @@ def report(db, now):
             'lastSuccessfulUpdate': stamp(get_meta(db, 'last_success')) if get_meta(db, 'last_success') else None,
             'baselineComplete': bool(get_meta(db, 'baseline_complete')),
             'recentHistory': get_meta(db, 'recent_backfill_v1'),
-            'catalogScope': 'Initial popular-title sample plus subsequently detected show-level changes; not a full catalog or episode tracker.',
+            'catalogScope': 'Gradually imported platform catalogues plus tracked additions; coverage is still partial and not an episode tracker.',
+            'catalogBackfill': catalog_backfill_status(db,coverage.get('mapping',{})),
             'runs': [{'at': stamp(r[0]), 'status': r[1], 'requests': r[2], 'changedRecords': r[3], 'message': r[4]} for r in runs],
             'changesByPlatform': {name: db.execute('SELECT count(*) FROM events WHERE platform=?', (name,)).fetchone()[0] for name in PLATFORMS},
             'successfulRunsWithoutChanges': sum(r[1] == 'success' and r[3] == 0 for r in runs)}

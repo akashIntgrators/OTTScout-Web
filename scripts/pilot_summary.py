@@ -30,6 +30,11 @@ if path.exists() and 'catalog' in report:
     for name, stats in catalog['platforms'].items():
         lines.append(f"| {name} | {stats['offers']} | {stats['offersWithTargetAudio']} | {stats['unknownAudioOffers']} |")
     lines += ['', 'Counts describe the imported sample, not complete platform coverage.']
+if path.exists() and report.get('catalogBackfill', {}).get('platforms'):
+    lines += ['', '### Older catalogue import progress', '', '| Platform | Movie pages | Series pages |', '| --- | ---: | ---: |']
+    for name, pages in report['catalogBackfill']['platforms'].items():
+        lines.append(f"| {name} | {pages['movie']} | {pages['series']} |")
+    lines += ['', 'Pages are imported in rotation. These counts do not mean a complete platform catalogue.']
 text = '\n'.join(lines) + '\n'
 summary = os.environ.get('GITHUB_STEP_SUMMARY')
 if summary:
@@ -37,3 +42,4 @@ if summary:
         handle.write(text)
 else:
     print(text)
+
