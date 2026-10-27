@@ -22,6 +22,10 @@ let visibleLimit = PAGE_SIZE;
 const storedGenres = readList('ottscout-genres');
 let selectedGenres = storedGenres && !storedGenres.includes('*') ? new Set(storedGenres) : null;
 let originalOnly = readList('ottscout-original-only')?.[0] === true;
+let subscriptionOnly = readList('ottscout-subscription-only')?.[0] === true;
+const originalChoices = [...languages, 'Other languages', 'Unverified'];
+const storedOriginals = readList('ottscout-originals');
+let selectedOriginals = storedOriginals && !storedOriginals.includes('*') ? new Set(storedOriginals.filter(x=>originalChoices.includes(x))) : null;
 
 function readList(key) {
   try { const value = JSON.parse(localStorage.getItem(key)); return Array.isArray(value) ? value : null; }
@@ -52,10 +56,17 @@ function weeklyTitle(title) {
   const now = Date.now() / 1000;
   return title.weeklyUpdatedAt <= now && title.weeklyUpdatedAt >= now - 7 * DAY;
 }
+function originalBucket(title) {
+  return title.originalLanguage ? languages.includes(title.originalLanguage) ? title.originalLanguage : 'Other languages' : 'Unverified';
+}
+function matchingOriginal(title) {
+  return selectedOriginals===null || selectedOriginals.has(originalBucket(title));
+}
 function matchingOffers(title, weeklyOnly = view === 'weekly') {
   const offers = title.offers || [{platform:title.platform, audio:title.audio, subtitles:[], type:'sample'}];
   const priority = {subscription:0, free:1, addon:2, rent:3, buy:4, sample:5};
-  return offers.filter(offer => selectedPlatforms.has(offer.platform)
+  return offers.filter(offer => matchingOriginal(title) && selectedPlatforms.has(offer.platform)
+    && (!subscriptionOnly || (offer.type==='subscription' && !offer.addon))
     && offer.audio.some(language => selectedLanguages.has(language) && (!originalOnly || language === title.originalLanguage))
     && (!weeklyOnly || !liveCatalog || title.weeklyPlatforms.includes(offer.platform)))
     .sort((a,b) => (priority[a.type] ?? 6) - (priority[b.type] ?? 6) || a.platform.localeCompare(b.platform));
@@ -148,6 +159,8 @@ function cardFor(title) {
     options.append(metadata,credit);
   }
   offers.forEach(offer => options.append(offerBody(offer)));
+  const report = element('button','Report incorrect details','report-button');
+  report.type='button'; report.onclick=()=>openReport(title); options.append(report);
   body.append(options);
   card.append(poster, body);
   return card;
@@ -180,11 +193,52 @@ function renderGenres() {
     checkbox.onchange=()=>{
       if(selectedGenres===null) selectedGenres=new Set(genres);
       checkbox.checked ? selectedGenres.add(genre) : selectedGenres.delete(genre);
-      persist('ottscout-genres',selectedGenres); visibleLimit=PAGE_SIZE;renderGenres();render();
+      persist('ottscout-genres',selectedGenres); visibleLimit=PAGE_SIZE;$('#genre-summary small').textContent=selectedGenres.size;render();
     };
     label.append(checkbox,element('span',genre)); return label;
   }));
   $('#genre-summary small').textContent=selectedGenres===null ? 'All' : [...selectedGenres].filter(g=>genres.includes(g)).length;
+}
+function renderOriginals() {
+  $('#originals').replaceChildren(...originalChoices.map(language=>{
+    const label=element('label');const input=element('input');input.type='checkbox';input.value=language;
+    input.checked=selectedOriginals===null || selectedOriginals.has(language);
+    input.setAttribute('aria-label','Originally '+language);
+    input.onchange=()=>{if(selectedOriginals===null)selectedOriginals=new Set(originalChoices);input.checked?selectedOriginals.add(language):selectedOriginals.delete(language);persist('ottscout-originals',selectedOriginals);visibleLimit=PAGE_SIZE;$('#original-summary small').textContent=selectedOriginals.size;render();};
+    label.append(input,element('span',language));return label;
+  }));
+  $('#original-summary small').textContent=selectedOriginals===null?'All':selectedOriginals.size;
+}
+function activeFilterChips() {
+  const chips=[];
+  function chip(label,reset){const button=element('button',label+' ×','filter-chip');button.type='button';button.setAttribute('aria-label','Remove filter: '+label);button.onclick=()=>{reset();visibleLimit=PAGE_SIZE;updateSelections();renderGenres();renderOriginals();render();};chips.push(button);}
+  const brief=items=>items.length ? items.slice(0,2).join(', ')+(items.length>2?` +${items.length-2}`:''):'None';
+  if(selectedPlatforms.size!==platforms.length)chip('Platforms: '+brief([...selectedPlatforms]),()=>{selectedPlatforms.clear();platforms.forEach(x=>selectedPlatforms.add(x));persist('ottscout-platforms',selectedPlatforms);});
+  if(selectedLanguages.size!==languages.length)chip('Watch in: '+brief([...selectedLanguages]),()=>{selectedLanguages.clear();languages.forEach(x=>selectedLanguages.add(x));persist('ottscout-languages',selectedLanguages);});
+  if(selectedOriginals!==null)chip('Originally: '+brief([...selectedOriginals]),()=>{selectedOriginals=null;persist('ottscout-originals',['*']);});
+  if(selectedGenres!==null)chip('Genres: '+brief([...selectedGenres]),()=>{selectedGenres=null;persist('ottscout-genres',['*']);});
+  if(subscriptionOnly)chip('Included with subscription',()=>{subscriptionOnly=false;$('#subscription-only').checked=false;persist('ottscout-subscription-only',[false]);});
+  if(originalOnly)chip('Original audio only',()=>{originalOnly=false;$('#original-only').checked=false;persist('ottscout-original-only',[false]);});
+  $('#active-filters').replaceChildren(...chips);
+}
+function reportText(title, category, platform, correction) {
+  const offers=(title.offers||[]).filter(o=>platform==='All listed platforms'||o.platform===platform);
+  return `Title: ${title.title} (${title.year||'Year unverified'})\nCatalogue ID: ${title.id}\nPage: https://ottscout.techiwithhelmet.com/titles/${encodeURIComponent(String(title.id).replace(/^motn:/,''))}/\nIssue: ${category}\nPlatform: ${platform}\nListed original language: ${title.originalLanguage||'Unverified'}\nListed genres: ${(title.tmdb?.genres||[]).join(', ')||'Unverified'}\nListed offers:\n${offers.slice(0,8).map(o=>'- '+o.platform+' | '+(offerNames[o.type]||'Unverified')+(o.addon?' ('+o.addon+')':'')+' | audio: '+formatLanguages(o.audio)).join('\n')}\n\nWhat should be corrected?\n${correction.trim()}\n\nSource snapshot: ${liveCatalog?.updatedAt||'Sample preview'}`;
+}
+function openReport(title) {
+  const dialog=$('#report-dialog');$('#report-title').textContent='Report: '+title.title;
+  $('#report-correction').value='';$('#report-category').value='Original language';$('#report-feedback').textContent='';
+  const choices=['All listed platforms',...new Set((title.offers||[]).map(o=>o.platform))];
+  $('#report-platform').replaceChildren(...choices.map(name=>{const option=element('option',name);option.value=name;return option;}));
+  const update=()=>{
+    const text=reportText(title,$('#report-category').value,$('#report-platform').value,$('#report-correction').value);
+    $('#report-preview').value=text;
+    const url=new URL('https://github.com/akashIntgrators/OTTScout-Web/issues/new');url.searchParams.set('title','Incorrect details: '+title.title);url.searchParams.set('body',text);
+    $('#report-github').href=url.href;
+  };
+  for(const id of ['report-category','report-platform','report-correction'])$('#'+id).oninput=update;
+  $('#report-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#report-preview').value);$('#report-feedback').textContent='Report copied.';}catch{$('#report-preview').focus();$('#report-preview').select();$('#report-feedback').textContent='Select and copy the report below.';}};
+  $('#report-close').onclick=()=>dialog.close();update();dialog.showModal();
 }
 function renderOptions(kind) {
   const list = kind === 'platforms' ? platforms : languages;
@@ -209,7 +263,7 @@ function renderOptions(kind) {
 function updateSelections() {
   $('#platform-summary small').textContent = selectedPlatforms.size === platforms.length ? 'All' : `${selectedPlatforms.size}`;
   $('#language-summary small').textContent = selectedLanguages.size === languages.length ? 'All' : `${selectedLanguages.size}`;
-  $('#selection-status').textContent = `${selectedPlatforms.size === platforms.length ? 'All platforms' : `${selectedPlatforms.size} platform${selectedPlatforms.size === 1 ? '' : 's'}`} · ${selectedLanguages.size === languages.length ? 'All six languages' : `${selectedLanguages.size} language${selectedLanguages.size === 1 ? '' : 's'}`}`;
+  $('#selection-status').textContent = `${selectedPlatforms.size === platforms.length ? 'All platforms' : `${selectedPlatforms.size} platform${selectedPlatforms.size === 1 ? '' : 's'}`} · ${selectedLanguages.size === languages.length ? 'All six audio languages' : `${selectedLanguages.size} language${selectedLanguages.size === 1 ? '' : 's'}`}`;
   for (const kind of ['platforms','languages']) {
     const selected = kind === 'platforms' ? selectedPlatforms : selectedLanguages;
     document.querySelectorAll(`#${kind} input`).forEach(input => { input.checked = selected.has(input.value); });
@@ -229,6 +283,9 @@ function emptyState() {
   let message = 'Try another search or select more platforms and languages.';
   if (!selectedPlatforms.size) message = 'Select at least one platform to see titles.';
   else if (!selectedLanguages.size) message = 'Select at least one audio language to see titles.';
+  else if (selectedOriginals!==null && !selectedOriginals.size) message='Select at least one original language, or choose All.';
+  else if (selectedGenres!==null && !selectedGenres.size) message='Select at least one genre, or choose All.';
+  else if (subscriptionOnly) message='No base-subscription offers match these filters. Try more platforms or turn off Included with subscription.';
   else if (liveCatalog && [...selectedPlatforms].every(name => liveCatalog.missingPlatforms.includes(name))) message = 'Our current data provider does not cover the selected platforms. Choose another platform to explore available titles.';
   else if (view === 'watchlist') { heading = 'A good watch is worth saving'; message = 'Tap + on a title to add it to your watchlist. Your current filters also apply here.'; }
   else if (view === 'weekly') {
@@ -242,6 +299,7 @@ function emptyState() {
   return node;
 }
 function render() {
+  activeFilterChips();
   const query = $('#search').value.toLocaleLowerCase().trim();
   const found = titles.filter(title => matchingGenres(title) && matchingOffers(title).length
     && title.title.toLocaleLowerCase().includes(query)
@@ -272,6 +330,8 @@ function resetFilters() {
   selectedPlatforms.clear(); platforms.forEach(name=>selectedPlatforms.add(name));
   selectedLanguages.clear(); languages.forEach(name=>selectedLanguages.add(name));
   persist('ottscout-platforms',selectedPlatforms); persist('ottscout-languages',selectedLanguages);
+  selectedOriginals=null;persist('ottscout-originals',['*']);renderOriginals();
+  subscriptionOnly=false;$('#subscription-only').checked=false;persist('ottscout-subscription-only',[false]);
   selectedGenres=null; persist('ottscout-genres',['*']);renderGenres();
   originalOnly=false; $('#original-only').checked=false; persist('ottscout-original-only',[false]);
   $('#search').value=''; contentType='all'; visibleLimit=PAGE_SIZE;
@@ -280,7 +340,11 @@ function resetFilters() {
 }
 for (const kind of ['platforms','languages']) renderOptions(kind);
 updateSelections();
-renderGenres();
+renderGenres();renderOriginals();
+$('#original-all').onclick=()=>{selectedOriginals=null;persist('ottscout-originals',['*']);visibleLimit=PAGE_SIZE;renderOriginals();render();};
+$('#original-clear').onclick=()=>{selectedOriginals=new Set();persist('ottscout-originals',selectedOriginals);visibleLimit=PAGE_SIZE;renderOriginals();render();};
+$('#subscription-only').checked=subscriptionOnly;
+$('#subscription-only').onchange=()=>{subscriptionOnly=$('#subscription-only').checked;persist('ottscout-subscription-only',[subscriptionOnly]);visibleLimit=PAGE_SIZE;render();};
 $('#genre-all').onclick=()=>{selectedGenres=null;persist('ottscout-genres',['*']);visibleLimit=PAGE_SIZE;renderGenres();render();};
 $('#genre-clear').onclick=()=>{selectedGenres=new Set();persist('ottscout-genres',selectedGenres);visibleLimit=PAGE_SIZE;renderGenres();render();};
 $('#original-only').checked=originalOnly;
@@ -303,11 +367,12 @@ document.querySelectorAll('#type button').forEach(button=>button.onclick=()=>{
   document.querySelectorAll('#type button').forEach(option=>option.setAttribute('aria-pressed',option===button));render();
 });
 document.querySelectorAll('.view-tabs button').forEach(button=>button.onclick=()=>setView(button.dataset.view));
-const menus=[$('#platform-menu'),$('#language-menu'),$('#genre-menu')];
+const menus=[$('#platform-menu'),$('#language-menu'),$('#original-menu'),$('#genre-menu')];
 menus.forEach(menu=>menu.addEventListener('toggle',()=>{if(menu.open)menus.filter(other=>other!==menu).forEach(other=>{other.open=false;});}));
 document.addEventListener('click',event=>menus.forEach(menu=>{if(!menu.contains(event.target))menu.open=false;}));
 document.addEventListener('keydown',event=>{
-  if(event.key==='/'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)){event.preventDefault();$('#search').focus();}
+  if(event.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){event.preventDefault();$('#search').focus();}
+  if($('#report-dialog').open)return;
   if(event.key==='Escape'){const open=menus.find(menu=>menu.open);if(open){open.open=false;open.querySelector('summary').focus();}}
 });
 render();
@@ -325,9 +390,9 @@ async function loadCatalog() {
       for(const offer of title.offers)if(!platforms.includes(offer.platform)||!Array.isArray(offer.audio)||!offer.audio.every(x=>typeof x==='string')||!Array.isArray(offer.subtitles)||!offer.subtitles.every(x=>typeof x==='string'))throw new Error('Invalid offer');
     }
     liveCatalog=data;titles=data.titles;
-    renderGenres();
+    renderGenres();renderOriginals();
     const enrichment=data.tmdbEnrichment;
-    $('#metadata-status').textContent=enrichment ? `TMDB metadata: ${enrichment.matched} of ${enrichment.total} titles matched${enrichment.status==='missing-token'?' · Connection pending':enrichment.status==='error'?' · Update delayed':' · Coverage builds gradually'}. Unmatched genres are marked Unverified.` : 'TMDB metadata connection pending. Genres remain unverified until matched.';
+    $('#metadata-status').textContent=enrichment ? `Original language known for ${titles.filter(t=>t.originalLanguage).length} of ${titles.length} titles. Genre coverage is still expanding${enrichment.status==='error'?' · Metadata update delayed':''}. Unmatched details remain Unverified.` : 'Language and genre details are still being verified. Unmatched details remain Unverified.';
     const stale=Date.now()-Date.parse(data.updatedAt)>12*60*60*1000;
     $('#catalog-status').textContent=`${stale?'Updates delayed · ':''}India catalog · Updated ${new Date(data.updatedAt).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZone:'Asia/Kolkata'})} IST · ${data.coverage?.length || 0} platforms covered`;
     $('#coverage-note').textContent=data.missingPlatforms.length?`Coverage note: ${data.missingPlatforms.join(' and ')} are not available from our current data provider. Search covers our imported catalog.`:'Availability is reported by our data provider. Search covers our imported catalog.';
