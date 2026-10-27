@@ -10,6 +10,10 @@ on:
         description: 'Start the 30-day pilot if no database exists (first run only)'
         type: boolean
         default: false
+      metadata_ids:
+        description: 'Optional legacy metadata repair: up to five motn:numeric IDs, comma separated'
+        type: string
+        default: ''
       publish:
         description: 'Publish validated catalog to the website after reviewing provider coverage and terms'
         type: boolean
@@ -60,6 +64,7 @@ jobs:
       - name: Enrich original language and genres from TMDB
         if: success()
         env:
+          TMDB_REFRESH_IDS: ${{ inputs.metadata_ids }}
           TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
           TMDB_RUN_REQUEST_LIMIT: ${{ vars.TMDB_RUN_REQUEST_LIMIT || '300' }}
         run: python scripts/tmdb_enrich.py
