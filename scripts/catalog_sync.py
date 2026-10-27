@@ -472,9 +472,19 @@ def main():
     parser.add_argument('--report', default='reports/pilot.json')
     parser.add_argument('--export', default='data/catalog.json')
     parser.add_argument('--initialize', action='store_true')
+    parser.add_argument('--export-cached', action='store_true', help='Export the last validated streaming snapshot without provider requests')
     args = parser.parse_args()
     db = open_db(args.db)
     now = int(time.time())
+    if args.export_cached:
+        if not export_catalog(db, args.export, now):
+            print('No validated streaming snapshot is cached; run a streaming sync first')
+            return 1
+        target = Path(args.report)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(report(db, now), indent=2))
+        print('Exported cached streaming snapshot; no streaming API requests made')
+        return 0
     if get_meta(db, 'pilot_started') is None:
         if not args.initialize:
             print('No pilot database restored. Run manually with initialize enabled; scheduled run made no API calls.')

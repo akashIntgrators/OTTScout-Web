@@ -125,7 +125,7 @@ def enrich(catalog, db, client, now, priority_ids=()):
         if title['id'] in priority_ids or not row or row[0] != identity(title) or now-row[1] >= (30*DAY if row[2] else 7*DAY):
             pending.append(title)
     # Latest weekly additions first, then remaining uncached titles, then expired entries.
-    pending.sort(key=lambda t:(t['id'] not in priority_ids, t['id'] in cached, -(t.get('weeklyUpdatedAt') or 0), t['id']))
+    pending.sort(key=lambda t:(t['id'] not in priority_ids, not bool(t.get('tmdbId') or t.get('imdbId')), t['id'] in cached, -(t.get('weeklyUpdatedAt') or 0), t['id']))
     status, message = ('ready','TMDB batch completed') if client else ('missing-token','TMDB token not configured; no requests made')
     if client:
         for title in pending:
@@ -153,7 +153,9 @@ def enrich(catalog, db, client, now, priority_ids=()):
             title['originalLanguage'] = metadata['originalLanguage']
             title['originalLanguageSource'] = 'TMDB' if metadata['originalLanguage'] else None
             matched += 1
-    catalog['tmdbEnrichment'] = {'status':status,'message':message,'matched':matched,'total':len(titles),
+    counts = {state:sum(t['tmdbMatchStatus']==state for t in titles) for state in ('matched','pending','unmatched')}
+    catalog['tmdbEnrichment'] = {'status':status,'message':message,'matched':matched,'total':len(titles),'pending':counts['pending'],'unmatched':counts['unmatched'],
+                               'verifiedOriginals':sum(bool(t.get('originalLanguage')) for t in titles),
                                'requestsThisRun':client.calls if client else 0,'checkedAt':now}
     return catalog['tmdbEnrichment']
 
