@@ -6,7 +6,10 @@
   const save = value => { try { localStorage.setItem(key, value); } catch {} };
   function start() {
     window['ga-disable-' + id] = false;
-    if (loaded) return;
+    if (loaded) {
+      window.gtag('consent','update',{analytics_storage:'granted'});
+      return;
+    }
     loaded = true;
     window.dataLayer = window.dataLayer || [];
     window.gtag = function () { window.dataLayer.push(arguments); };
