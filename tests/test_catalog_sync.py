@@ -254,5 +254,17 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(title['weeklyPlatforms'], ['Netflix'])
         self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0], 1)
 
+    def test_cached_export_does_not_call_streaming_provider(self):
+        sync.set_meta(self.db, 'pilot_started', NOW-1000)
+        sync.set_meta(self.db, 'last_success', NOW-100)
+        sync.set_meta(self.db, 'coverage', {'mapping': {'Netflix':'netflix'}, 'missing':[]})
+        self.db.execute('INSERT INTO runs(at,status,requests,changed,message) VALUES (?,?,?,?,?)', (NOW-100,'success',1,0,'Test'))
+        sync.save_show(self.db, show(), {'Netflix':'netflix'}, NOW-100)
+        self.db.commit()
+        target=self.root/'cached.json'
+        with patch.object(sys,'argv',['catalog_sync.py','--db',str(self.root/'state.sqlite'),'--export-cached','--export',str(target),'--report',str(self.root/'report.json')]), patch.object(sync.Client,'get',side_effect=AssertionError('Provider called')):
+            self.assertEqual(sync.main(),0)
+        self.assertEqual(json.loads(target.read_text())['titles'][0]['title'],'A real-looking test fixture')
+
 if __name__ == '__main__':
     unittest.main()

@@ -29,4 +29,27 @@ if(matchingGenres({tmdb:{genres:['Drama']}}))throw Error('Empty genres matched')
 selectedGenres=null;
 if(!matchingGenres({}))throw Error('All genres excluded unknown');
 `,context);
-console.log('Original audio and genre filter scenarios passed.');
+vm.runInContext(`
+selectedGenres=null;selectedLanguages.clear();selectedLanguages.add('Hindi');originalOnly=false;
+selectedOriginals=new Set(['Telugu']);
+const teluguDub={id:'motn:42',title:'Drive',year:2025,originalLanguage:'Telugu',offers:[{platform:'Netflix',audio:['Hindi'],type:'subscription'}]};
+if(matchingOffers(teluguDub).length!==1)throw Error('Original language incorrectly tied to viewing audio');
+selectedOriginals=new Set(['Hindi']);
+if(matchingOffers(teluguDub).length!==0)throw Error('Dub treated as original language');
+selectedOriginals=new Set(['Unverified']);
+if(matchingOffers({offers:teluguDub.offers}).length!==1)throw Error('Unverified original missing');
+selectedOriginals=new Set(['Other languages']);
+if(matchingOffers({...teluguDub,originalLanguage:'Spanish'}).length!==1)throw Error('Other original language missing');
+selectedOriginals=new Set();
+if(matchingOffers(teluguDub).length)throw Error('Cleared original filter returned titles');
+selectedOriginals=null;subscriptionOnly=true;
+const commercial={...teluguDub,offers:['subscription','free','rent','buy','addon'].map(type=>({platform:'Netflix',audio:['Hindi'],type}))};
+commercial.offers.push({platform:'Netflix',audio:['Hindi'],type:'subscription',addon:'Extra channel'});
+if(matchingOffers(commercial).length!==1)throw Error('Extra-charge or free offer passed subscription-only filter');
+subscriptionOnly=false;
+if(matchingOffers(commercial).length!==6)throw Error('Normal offers lost');
+const text=reportText(teluguDub,'Original language','Netflix','Confirmed on the platform');
+if(!text.includes('motn:42')||!text.includes('Original language')||!text.includes('Confirmed on the platform')||!text.includes('Hindi'))throw Error('Report lacks correction context');
+if(text.includes('TMDB_READ_ACCESS_TOKEN')||text.includes('localStorage'))throw Error('Report contains implementation or private storage');
+`,context);
+console.log('Original language, viewing audio, subscription, genre and report scenarios passed.');

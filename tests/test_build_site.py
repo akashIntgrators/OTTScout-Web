@@ -25,6 +25,8 @@ class DiscoveryBuildTests(unittest.TestCase):
             self.assertNotIn('javascript:', movie)
             self.assertIn('Audio: Hindi', movie)
             self.assertIn('Original language: Kannada', movie)
+            self.assertIn('Report incorrect details on GitHub', movie)
+            self.assertIn('Public issue; review before submitting', movie)
             self.assertIn('/titles/42/', (site/'languages/hindi/index.html').read_text())
             self.assertNotIn('/titles/43/', (site/'languages/hindi/index.html').read_text())
             self.assertNotIn('Older title', (site/'this-week/index.html').read_text())
