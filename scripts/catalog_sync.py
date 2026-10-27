@@ -106,6 +106,7 @@ def normalize(show, mapping, now):
             'type': 'Movie' if show['showType'] == 'movie' else 'Series',
             'year': show.get('releaseYear') or show.get('firstAirYear'),
             'overview': show.get('overview', ''),
+            'tmdbId': show.get('tmdbId'), 'imdbId': show.get('imdbId'),
             'originalLanguage': LANGUAGES.get(show.get('originalLanguage', '').lower(), show.get('originalLanguage')) if isinstance(show.get('originalLanguage'), str) else None,
             'genres': [g['name'] for g in show.get('genres', []) if isinstance(g, dict) and isinstance(g.get('name'), str)],
             'poster': safe_url(poster.get('w480') or poster.get('w360')),
@@ -116,6 +117,10 @@ def save_show(db, show, mapping, now):
     old = db.execute('SELECT body FROM titles WHERE id=?', (body['id'],)).fetchone()
     if old and not body.get('originalLanguage'):
         body['originalLanguage'] = json.loads(old[0]).get('originalLanguage')
+    if old:
+        previous = json.loads(old[0])
+        for key in ('tmdbId', 'imdbId'):
+            if not body.get(key): body[key] = previous.get(key)
     encoded = json.dumps(body, sort_keys=True, ensure_ascii=False)
     changed = not old or old[0] != encoded
     db.execute('''INSERT INTO titles VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,last_checked=excluded.last_checked''',
