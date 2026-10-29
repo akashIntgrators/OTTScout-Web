@@ -318,9 +318,10 @@ class CatalogTests(unittest.TestCase):
                 inner.calls+=1
                 self.assertEqual(params['cursor'],'second')
                 self.assertEqual(params['to'],NOW)
+                self.assertEqual(params['catalogs'],'netflix')
                 return {'shows':{'two':show('two')},'changes':[{'showId':'two','service':{'id':'netflix'},'timestamp':NOW-5}], 'hasMore':False}
         later=Second()
-        self.assertEqual(sync.sync_change_feed(self.db,later,{'Netflix':'netflix'},'new',NOW-100,NOW+21600),2)
+        self.assertEqual(sync.sync_change_feed(self.db,later,{'Netflix':'netflix','Prime Video':'prime'},'new',NOW-100,NOW+21600),2)
         self.assertEqual(later.calls,1)
         self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
         self.assertIsNone(sync.get_meta(self.db,'change_window_v2:new'))
