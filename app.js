@@ -19,6 +19,9 @@ let liveCatalog = null;
 let view = 'weekly';
 let contentType = 'all';
 let weeklyKind = 'all';
+let audioDescriptionOnly = readList('ottscout-audio-description')?.[0] === true;
+let shortcutsEnabled = readList('ottscout-shortcuts')?.[0] === true;
+let announcementTimer;
 let visibleLimit = PAGE_SIZE;
 const storedGenres = readList('ottscout-genres');
 let selectedGenres = storedGenres && !storedGenres.includes('*') ? new Set(storedGenres) : null;
@@ -49,6 +52,39 @@ function element(tag, text, className) {
 }
 function secureURL(value) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; } catch { return null; }
+}
+function netflixTitleId(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || !['netflix.com','www.netflix.com'].includes(url.hostname) || url.username || url.password || url.port) return null;
+    return url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:title|watch)\/([0-9]+)\/?$/)?.[1] || null;
+  } catch { return null; }
+}
+function descriptionReport(offer, now = Date.now()/1000) {
+  const report=offer.audioDescription;
+  if (offer.platform!=='Netflix' || !report || report.status!=='reported' || report.indiaPlaybackVerified!==false
+      || !Number.isFinite(report.checkedAt) || report.checkedAt>now || report.checkedAt<now-30*DAY
+      || !Number.isFinite(report.expiresAt) || report.expiresAt<now || report.expiresAt>report.checkedAt+30*DAY
+      || !Array.isArray(report.languages) || !report.languages.length || !report.languages.every(l=>languages.includes(l))
+      || !netflixTitleId(report.sourceURL) || netflixTitleId(report.sourceURL)!==netflixTitleId(offer.link)) return null;
+  return report;
+}
+function descriptionLanguages(offer, title) {
+  return (descriptionReport(offer)?.languages || []).filter(l=>selectedLanguages.has(l) && (!originalOnly || l===title.originalLanguage));
+}
+function titleDomId(id) { return 'title-'+String(id).replace(/[^a-zA-Z0-9_-]/g,'-'); }
+function nextCardId(id) {
+  const cards=[...document.querySelectorAll('#catalog .card')];
+  const index=cards.findIndex(card=>card.dataset.titleId===String(id));
+  return (cards[index+1] || cards[index-1])?.dataset.titleId;
+}
+function focusTitle(id) {
+  const target=id && document.getElementById(titleDomId(id))?.querySelector('a');
+  (target || $('#heading')).focus();
+}
+function announceResults(message) {
+  clearTimeout(announcementTimer);
+  announcementTimer=setTimeout(()=>{ $('#results-status').textContent=message; },250);
 }
 function weeklyTitle(title) {
   if (!liveCatalog) return Boolean(title.weekly);
@@ -98,7 +134,7 @@ function matchingOffers(title, weeklyOnly = view === 'weekly') {
   const priority = {subscription:0, free:1, addon:2, rent:3, buy:4, sample:5};
   return offers.filter(offer => matchingOriginal(title) && selectedPlatforms.has(offer.platform)
     && (!subscriptionOnly || (offer.type==='subscription' && !offer.addon))
-    && offer.audio.some(language => selectedLanguages.has(language) && (!originalOnly || language === title.originalLanguage))
+    && (audioDescriptionOnly ? descriptionLanguages(offer,title).length>0 : offer.audio.some(language => selectedLanguages.has(language) && (!originalOnly || language === title.originalLanguage)))
     && (!weeklyOnly || !liveCatalog || weeklyOfferDate(title, offer) !== null))
     .sort((a,b) => (priority[a.type] ?? 6) - (priority[b.type] ?? 6) || a.platform.localeCompare(b.platform));
 }
@@ -116,15 +152,15 @@ function formatLanguages(available) {
   return labels.slice(0,3).join(' · ') + (labels.length > 3 ? ` · +${labels.length - 3} more` : '');
 }
 const offerNames = {subscription:'Included with subscription', free:'Free to watch', rent:'Rent', buy:'Buy', addon:'Add-on subscription', sample:'Sample listing'};
-function providerLink(offer) {
+function providerLink(offer, titleLabel='') {
   const href = secureURL(offer.link);
   const link = element(href ? 'a' : 'div', offer.platform + (href ? ' ↗' : ''), 'provider');
-  if (href) { link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+  if (href) { link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.setAttribute('aria-label', `${offer.platform}${titleLabel?' — watch '+titleLabel:''} (opens in a new tab)`); }
   return link;
 }
-function offerBody(offer, includeSubtitles = true) {
+function offerBody(offer, includeSubtitles = true, titleLabel='') {
   const node = element('div', undefined, 'offer');
-  node.append(providerLink(offer), element('div', `${offerNames[offer.type] || 'Offer unverified'}${offer.addon ? ' · ' + offer.addon : ''}`, 'offer-type'));
+  node.append(providerLink(offer,titleLabel), element('div', `${offerNames[offer.type] || 'Offer unverified'}${offer.addon ? ' · ' + offer.addon : ''}`, 'offer-type'));
   const audio = element('div', undefined, 'audio');
   audio.append(element('span','Audio: '), document.createTextNode(formatLanguages(offer.audio)));
   node.append(audio);
@@ -133,14 +169,23 @@ function offerBody(offer, includeSubtitles = true) {
     subtitles.append(element('span','Subtitles: '), document.createTextNode(formatLanguages(offer.subtitles)));
     node.append(subtitles);
   }
+  const report=descriptionReport(offer);
+  if (report) {
+    node.append(element('p','Audio description reported: '+formatLanguages(report.languages),'ad-report'));
+    const source=element('a','View provider report ↗','provider');source.href=report.sourceURL;source.target='_blank';source.rel='noopener noreferrer';
+    source.setAttribute('aria-label',`Audio-description report for ${titleLabel || 'this title'} on ${offer.platform} (opens in a new tab)`);
+    node.append(source,element('p',`Report checked ${checkedDate(report.checkedAt)}. India playback is unverified; confirm the track in the player.`,'verification-note'));
+  } else node.append(element('p','Audio description: Unverified. Ordinary audio and subtitles do not confirm a description track.','verification-note'));
   return node;
 }
 function cardFor(title) {
   const offers = matchingOffers(title);
   const card = element('article', undefined, 'card');
+  card.dataset.titleId=String(title.id);card.setAttribute('aria-labelledby',titleDomId(title.id));
   const poster = element('div', undefined, 'poster');
   poster.style.setProperty('--poster-color', title.color || '#345347');
   const fallback = element('strong', title.title, 'poster-title');
+  fallback.setAttribute('aria-hidden','true');
   const imageURL = liveCatalog ? secureURL(title.poster) : `assets/${title.artwork}.png`;
   fallback.hidden = Boolean(imageURL && liveCatalog);
   if (imageURL) {
@@ -155,25 +200,30 @@ function cardFor(title) {
   save.setAttribute('aria-label', `${saved.has(title.id) ? 'Remove from' : 'Add to'} watchlist: ${title.title}`);
   save.setAttribute('aria-pressed', saved.has(title.id));
   save.onclick = () => {
+    const next=nextCardId(title.id);
     saved.has(title.id) ? saved.delete(title.id) : saved.add(title.id);
     persist('ottscout-watchlist', saved);
     // Preserve focus when a saved card remains visible.
-    if (view === 'watchlist') render();
+    if (view === 'watchlist') { render();focusTitle(next); }
     else {
       save.textContent = saved.has(title.id) ? '✓' : '+';
       save.setAttribute('aria-pressed', saved.has(title.id));
       save.setAttribute('aria-label', `${saved.has(title.id) ? 'Remove from' : 'Add to'} watchlist: ${title.title}`);
       $('#count').textContent = saved.size;
+      announceResults(`${title.title} ${saved.has(title.id)?'added to':'removed from'} your watchlist. ${saved.size} saved titles.`);
     }
   };
   poster.append(save);
   const body = element('div', undefined, 'card-body');
-  const audio = [...new Set(offers.flatMap(offer => offer.audio))];
+  const audio = [...new Set(offers.flatMap(offer => audioDescriptionOnly ? descriptionLanguages(offer,title) : offer.audio))];
   const heading = element('h3', undefined, 'card-title');
+  heading.id=titleDomId(title.id);
   const name = element(liveCatalog ? 'a' : 'span', title.title);
   if (liveCatalog) name.href = '/titles/' + encodeURIComponent(title.id.replace(/^motn:/, '')) + '/';
-  heading.append(name, document.createTextNode(' '), element('span', '· Audio: ' + formatLanguages(audio), 'card-languages'));
+  heading.append(name, document.createTextNode(' '), element('span', (audioDescriptionOnly?'· Description audio: ':'· Audio: ') + formatLanguages(audio), 'card-languages'));
   body.append(heading, element('div', 'Original language: ' + formatLanguages(title.originalLanguage ? [title.originalLanguage] : []), 'original-language'));
+  const reported=[...new Set(offers.flatMap(offer=>descriptionReport(offer)?.languages || []))];
+  if (liveCatalog && reported.length) body.append(element('p','Audio description reported: '+formatLanguages(reported),'ad-report'));
   if (liveCatalog && view === 'weekly') {
     const added = Math.max(...offers.map(offer => weeklyOfferDate(title, offer) || 0));
     body.append(element('p', `${additionLabel(title)} · Added ${checkedDate(added)}`, 'addition-label'));
@@ -182,11 +232,11 @@ function cardFor(title) {
     const dismiss = element('button', 'Hide title', 'dismiss-title');
     dismiss.type = 'button';
     dismiss.setAttribute('aria-label', 'Hide title: ' + title.title);
-    dismiss.onclick = () => { dismissed.add(title.id); persist('ottscout-dismissed', dismissed); render(); };
+    dismiss.onclick = () => { const next=nextCardId(title.id);dismissed.add(title.id); persist('ottscout-dismissed', dismissed); render();focusTitle(next); };
     body.append(dismiss);
   }
   const options = element('details', undefined, 'watch-options');
-  options.append(element('summary', 'Where to watch'));
+  const summary=element('summary','Where to watch');summary.append(element('span',' '+title.title,'sr-only'));options.append(summary);
   if (liveCatalog) {
     options.append(element('p', metadataExplanation(title), 'verification-note'));
     if (title.originalLanguage) options.append(element('p', `Original-language source: ${title.originalLanguageSource || 'Source unverified'}`, 'verification-note'));
@@ -197,15 +247,16 @@ function cardFor(title) {
     const metadata=element('div',`Genres: ${title.tmdb.genres.join(' · ') || 'Unverified'}`, 'audio');
     const credit=element('a','Metadata source: TMDB ↗','provider');
     credit.href='https://www.themoviedb.org/'+title.tmdb.mediaType+'/'+title.tmdb.id;credit.target='_blank';credit.rel='noopener noreferrer';
+    credit.setAttribute('aria-label',`Metadata for ${title.title} on TMDB (opens in a new tab)`);
     options.append(metadata,credit);
   }
   offers.forEach(offer => {
-    const item = offerBody(offer);
+    const item = offerBody(offer,true,title.title);
     if (liveCatalog && view === 'weekly') item.append(element('div', `Reported added ${checkedDate(weeklyOfferDate(title, offer))}${Number.isFinite(offer.availableSince) && offer.availableSince > 0 ? '' : ' · Offer date unverified; platform addition shown'}`, 'audio'));
     options.append(item);
   });
   const report = element('button','Report incorrect details','report-button');
-  report.type='button'; report.onclick=()=>openReport(title); options.append(report);
+  report.type='button';report.setAttribute('aria-label','Report incorrect details for '+title.title); report.onclick=()=>openReport(title); options.append(report);
   body.append(options);
   if (liveCatalog) body.append(element('p', `Availability checked ${checkedDate(title.lastCheckedAt)}`, 'checked-date'));
   card.append(poster, body);
@@ -213,7 +264,7 @@ function cardFor(title) {
 }
 function adSlot() {
   const slot = element('aside', undefined, 'ad-slot ad-infeed');
-  slot.setAttribute('aria-label','Advertisement space');
+  slot.setAttribute('aria-label','Reserved in-feed advertisement space');
   slot.append(element('span','ADVERTISEMENT','ad-label'));
   const copy = element('div', undefined, 'ad-placeholder');
   copy.append(element('span','Your ad here'), element('small','In-feed placement'));
@@ -257,7 +308,7 @@ function renderOriginals() {
 }
 function activeFilterChips() {
   const chips=[];
-  function chip(label,reset){const button=element('button',label+' ×','filter-chip');button.type='button';button.setAttribute('aria-label','Remove filter: '+label);button.onclick=()=>{reset();visibleLimit=PAGE_SIZE;updateSelections();renderGenres();renderOriginals();render();};chips.push(button);}
+  function chip(label,reset){const button=element('button',label+' ×','filter-chip');button.type='button';button.setAttribute('aria-label','Remove filter: '+label);button.onclick=()=>{reset();visibleLimit=PAGE_SIZE;updateSelections();renderGenres();renderOriginals();render();$('#reset-filters').focus();};chips.push(button);}
   const brief=items=>items.length ? items.slice(0,2).join(', ')+(items.length>2?` +${items.length-2}`:''):'None';
   if(selectedPlatforms.size!==platforms.length)chip('Platforms: '+brief([...selectedPlatforms]),()=>{selectedPlatforms.clear();platforms.forEach(x=>selectedPlatforms.add(x));persist('ottscout-platforms',selectedPlatforms);});
   if(selectedLanguages.size!==languages.length)chip('Watch in: '+brief([...selectedLanguages]),()=>{selectedLanguages.clear();languages.forEach(x=>selectedLanguages.add(x));persist('ottscout-languages',selectedLanguages);});
@@ -265,11 +316,12 @@ function activeFilterChips() {
   if(selectedGenres!==null)chip('Genres: '+brief([...selectedGenres]),()=>{selectedGenres=null;persist('ottscout-genres',['*']);});
   if(subscriptionOnly)chip('Included with subscription',()=>{subscriptionOnly=false;$('#subscription-only').checked=false;persist('ottscout-subscription-only',[false]);});
   if(originalOnly)chip('Original audio only',()=>{originalOnly=false;$('#original-only').checked=false;persist('ottscout-original-only',[false]);});
+  if(audioDescriptionOnly)chip('Audio description reported',()=>{audioDescriptionOnly=false;$('#audio-description-only').checked=false;persist('ottscout-audio-description',[false]);});
   $('#active-filters').replaceChildren(...chips);
 }
 function reportText(title, category, platform, correction) {
   const offers=(title.offers||[]).filter(o=>platform==='All listed platforms'||o.platform===platform);
-  return `Title: ${title.title} (${title.year||'Year unverified'})\nCatalogue ID: ${title.id}\nPage: https://ottscout.techiwithhelmet.com/titles/${encodeURIComponent(String(title.id).replace(/^motn:/,''))}/\nIssue: ${category}\nPlatform: ${platform}\nListed original language: ${title.originalLanguage||'Unverified'}\nListed genres: ${(title.tmdb?.genres||[]).join(', ')||'Unverified'}\nListed offers:\n${offers.slice(0,8).map(o=>'- '+o.platform+' | '+(offerNames[o.type]||'Unverified')+(o.addon?' ('+o.addon+')':'')+' | audio: '+formatLanguages(o.audio)).join('\n')}\n\nWhat should be corrected?\n${correction.trim()}\n\nSource snapshot: ${liveCatalog?.updatedAt||'Sample preview'}`;
+  return `Title: ${title.title} (${title.year||'Year unverified'})\nCatalogue ID: ${title.id}\nPage: https://ottscout.techiwithhelmet.com/titles/${encodeURIComponent(String(title.id).replace(/^motn:/,''))}/\nIssue: ${category}\nPlatform: ${platform}\nListed original language: ${title.originalLanguage||'Unverified'}\nListed genres: ${(title.tmdb?.genres||[]).join(', ')||'Unverified'}\nListed offers:\n${offers.slice(0,8).map(o=>'- '+o.platform+' | '+(offerNames[o.type]||'Unverified')+(o.addon?' ('+o.addon+')':'')+' | audio: '+formatLanguages(o.audio)+' | description reported: '+formatLanguages(descriptionReport(o)?.languages||[])).join('\n')}\n\nWhat should be corrected?\n${correction.trim()}\n\nSource snapshot: ${liveCatalog?.updatedAt||'Sample preview'}`;
 }
 function openReport(title) {
   const dialog=$('#report-dialog');$('#report-title').textContent='Report: '+title.title;
@@ -284,7 +336,7 @@ function openReport(title) {
   };
   for(const id of ['report-category','report-platform','report-correction'])$('#'+id).oninput=update;
   $('#report-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#report-preview').value);$('#report-feedback').textContent='Report copied.';}catch{$('#report-preview').focus();$('#report-preview').select();$('#report-feedback').textContent='Select and copy the report below.';}};
-  $('#report-close').onclick=()=>dialog.close();update();dialog.showModal();
+  $('#report-close').onclick=()=>dialog.close();update();dialog.showModal();$('#report-category').focus();
 }
 function renderOptions(kind) {
   const list = kind === 'platforms' ? platforms : languages;
@@ -315,13 +367,14 @@ function updateSelections() {
     document.querySelectorAll(`#${kind} input`).forEach(input => { input.checked = selected.has(input.value); });
   }
 }
-function setView(next) {
+function setView(next, moveFocus=false) {
   view = next; visibleLimit = PAGE_SIZE;
   document.querySelectorAll('.view-tabs button').forEach(button => {
     button.classList.toggle('active',button.dataset.view === view);
     if (button.dataset.view === view) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current');
   });
   render();
+  if(moveFocus)$('#heading').focus();
 }
 function emptyState() {
   const node = element('div',undefined,'empty');
@@ -333,6 +386,7 @@ function emptyState() {
   else if (selectedGenres!==null && !selectedGenres.size) message='Select at least one genre, or choose All.';
   else if (subscriptionOnly) message='No base-subscription offers match these filters. Try more platforms or turn off Included with subscription.';
   else if (liveCatalog && [...selectedPlatforms].every(name => liveCatalog.missingPlatforms.includes(name))) message = 'Our current data provider does not cover the selected platforms. Choose another platform to explore available titles.';
+  else if (audioDescriptionOnly) {heading='No current description reports match';message='Try more description languages or explore the full catalogue. Unverified does not mean unavailable; confirm tracks with the provider.';}
   else if (view === 'watchlist') { heading = 'A good watch is worth saving'; message = 'Tap + on a title to add it to your watchlist. Your current filters also apply here.'; }
   else if (view === 'weekly') {
     heading = 'No additions match your filters';
@@ -342,6 +396,7 @@ function emptyState() {
   const action = element('button',view === 'discover' ? 'Reset filters' : 'Explore all titles');
   action.type='button'; action.onclick=()=>{ if(view==='discover') resetFilters(); else { $('#search').value=''; setView('discover'); } };
   node.append(action);
+  if(audioDescriptionOnly){const guide=element('a','Read the audio-description guide');guide.href='/audio-description/';node.append(guide);}
   return node;
 }
 function render() {
@@ -372,6 +427,7 @@ function render() {
   $('#catalog').replaceChildren(...(content.length ? content : [emptyState()]));
   $('#load-more').hidden = found.length <= visibleLimit;
   $('#load-more').textContent = `Show ${Math.min(PAGE_SIZE, Math.max(0,found.length-visibleLimit))} more titles`;
+  announceResults(`${{weekly:'This week',discover:'Discover',watchlist:'Watchlist'}[view]}: ${found.length} ${found.length===1?'title matches':'titles match'}. ${Math.min(visibleLimit,found.length)} shown.${audioDescriptionOnly?' Only provider-reported description languages matching Watch in are included; India playback is unverified.':''}`);
 }
 function resetFilters() {
   selectedPlatforms.clear(); platforms.forEach(name=>selectedPlatforms.add(name));
@@ -381,12 +437,14 @@ function resetFilters() {
   subscriptionOnly=false;$('#subscription-only').checked=false;persist('ottscout-subscription-only',[false]);
   selectedGenres=null; persist('ottscout-genres',['*']);renderGenres();
   originalOnly=false; $('#original-only').checked=false; persist('ottscout-original-only',[false]);
+  audioDescriptionOnly=false;$('#audio-description-only').checked=false;persist('ottscout-audio-description',[false]);
   $('#search').value=''; contentType='all'; weeklyKind='all'; visibleLimit=PAGE_SIZE;
   document.querySelectorAll('#weekly-kind button').forEach(button=>button.setAttribute('aria-pressed',button.dataset.kind==='all'));
   document.querySelectorAll('#type button').forEach(button=>button.setAttribute('aria-pressed',button.dataset.type==='all'));
   updateSelections(); render();
 }
 for (const kind of ['platforms','languages']) renderOptions(kind);
+if(new URL(window.location.href).searchParams.get('audio-description')==='reported'){audioDescriptionOnly=true;view='discover';}
 updateSelections();
 renderGenres();renderOriginals();
 $('#original-all').onclick=()=>{selectedOriginals=null;persist('ottscout-originals',['*']);visibleLimit=PAGE_SIZE;renderOriginals();render();};
@@ -400,11 +458,15 @@ $('#original-only').onchange=()=>{originalOnly=$('#original-only').checked;persi
 $('#restore-hidden').onclick=()=>{dismissed.clear();persist('ottscout-dismissed',dismissed);render();};
 $('#search').oninput=()=>{visibleLimit=PAGE_SIZE;if($('#search').value.trim() && view==='weekly')setView('discover');else render();};
 $('#reset-filters').onclick=resetFilters;
+$('#audio-description-only').checked=audioDescriptionOnly;
+$('#audio-description-only').onchange=()=>{audioDescriptionOnly=$('#audio-description-only').checked;persist('ottscout-audio-description',[audioDescriptionOnly]);visibleLimit=PAGE_SIZE;render();};
+$('#enable-shortcuts').checked=shortcutsEnabled;
+$('#enable-shortcuts').onchange=()=>{shortcutsEnabled=$('#enable-shortcuts').checked;persist('ottscout-shortcuts',[shortcutsEnabled]);};
 document.querySelectorAll('#weekly-kind button').forEach(button=>button.onclick=()=>{
   weeklyKind=button.dataset.kind;visibleLimit=PAGE_SIZE;
   document.querySelectorAll('#weekly-kind button').forEach(option=>option.setAttribute('aria-pressed',option===button));render();
 });
-$('#load-more').onclick=()=>{visibleLimit+=PAGE_SIZE;render();};
+$('#load-more').onclick=()=>{const before=new Set([...document.querySelectorAll('#catalog .card')].map(n=>n.dataset.titleId));visibleLimit+=PAGE_SIZE;render();focusTitle([...document.querySelectorAll('#catalog .card')].find(n=>!before.has(n.dataset.titleId))?.dataset.titleId);};
 for (const attribute of ['select-all','clear']) document.querySelectorAll(`[data-${attribute}]`).forEach(button=>{
   button.onclick=()=>{
     const kind=button.dataset[attribute==='select-all'?'selectAll':'clear'];
@@ -418,16 +480,16 @@ document.querySelectorAll('#type button').forEach(button=>button.onclick=()=>{
   contentType=button.dataset.type;visibleLimit=PAGE_SIZE;
   document.querySelectorAll('#type button').forEach(option=>option.setAttribute('aria-pressed',option===button));render();
 });
-document.querySelectorAll('.view-tabs button').forEach(button=>button.onclick=()=>setView(button.dataset.view));
+document.querySelectorAll('.view-tabs button').forEach(button=>button.onclick=()=>setView(button.dataset.view,true));
 const menus=[$('#platform-menu'),$('#language-menu'),$('#original-menu'),$('#genre-menu')];
 menus.forEach(menu=>menu.addEventListener('toggle',()=>{if(menu.open)menus.filter(other=>other!==menu).forEach(other=>{other.open=false;});}));
 document.addEventListener('click',event=>menus.forEach(menu=>{if(!menu.contains(event.target))menu.open=false;}));
 document.addEventListener('keydown',event=>{
-  if(event.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){event.preventDefault();$('#search').focus();}
+  if(shortcutsEnabled && event.key==='/'&&!event.altKey&&!event.ctrlKey&&!event.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable && !$('#report-dialog').open){event.preventDefault();$('#search').focus();}
   if($('#report-dialog').open)return;
   if(event.key==='Escape'){const open=menus.find(menu=>menu.open);if(open){open.open=false;open.querySelector('summary').focus();}}
 });
-render();
+setView(view);
 
 async function loadCatalog() {
   try {
@@ -454,6 +516,8 @@ async function loadCatalog() {
   } catch {
     $('#catalog-status').textContent='Sample preview · Live catalog unavailable. Titles and streaming details below are illustrative.';
     $('#coverage-note').textContent='Sample data is shown until the live catalog is available.';
+  } finally {
+    document.dispatchEvent(new Event('ottscout:ready'));
   }
 }
 loadCatalog();

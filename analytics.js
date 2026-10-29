@@ -2,6 +2,7 @@
 (() => {
   const id = 'G-LV97MSZYW1', key = 'ottscout-analytics-consent';
   let loaded = false;
+  let openedFromControl = false;
   const read = () => { try { return localStorage.getItem(key); } catch { return null; } };
   const save = value => { try { localStorage.setItem(key, value); } catch {} };
   function start() {
@@ -25,7 +26,8 @@
   const panel = document.createElement('section');
   panel.setAttribute('aria-label','Optional analytics');
   panel.className = 'analytics-choice';
-  panel.style.cssText = 'position:fixed;bottom:16px;left:16px;right:16px;max-width:620px;padding:20px;background:#17232b;border:1px solid #718b96;border-radius:12px;z-index:1000;box-shadow:0 8px 32px #0008;color:#eef5f6';
+  panel.id = 'analytics-choice-panel';
+  panel.style.cssText = 'position:relative;width:calc(100% - 32px);max-width:760px;margin:18px auto;padding:20px;background:#17232b;border:1px solid #718b96;border-radius:12px;z-index:1000;box-shadow:0 8px 32px #0008;color:#eef5f6';
   panel.innerHTML = '<p>Help improve OTTScout? Optional Google Analytics measures page visits. Your search terms, filters and watchlist are not sent. <a href="/privacy/">Privacy details</a></p><div style="display:flex;gap:12px"><button type="button" data-choice="accepted">Allow analytics</button><button type="button" data-choice="declined">No thanks</button></div>';
   panel.addEventListener('click', event => {
     const choice = event.target.dataset.choice;
@@ -44,11 +46,17 @@
       }
     }
     panel.remove();
+    choices.setAttribute('aria-expanded','false');
+    if(openedFromControl) choices.focus();
+    else document.querySelector('main')?.focus?.();
   });
   const choices = document.createElement('button');
   choices.type = 'button'; choices.textContent = 'Analytics choices';
-  choices.addEventListener('click', () => document.body.append(panel));
+  choices.setAttribute('aria-controls',panel.id);choices.setAttribute('aria-expanded','false');
+  const showPanel=()=>{const main=document.querySelector('main');if(main?.prepend)main.prepend(panel);else document.body.append(panel);};
+  choices.addEventListener('click', () => {openedFromControl=true;showPanel();choices.setAttribute('aria-expanded','true');panel.querySelector('button')?.focus();});
+  panel.addEventListener('keydown',event=>{if(event.key==='Escape'){panel.remove();choices.setAttribute('aria-expanded','false');choices.focus();}});
   (document.querySelector('footer') || document.body).append(choices);
   if (read() === 'accepted') start();
-  else if (!read() && navigator.doNotTrack !== '1' && navigator.globalPrivacyControl !== true) document.body.append(panel);
+  else if (!read() && navigator.doNotTrack !== '1' && navigator.globalPrivacyControl !== true) {showPanel();choices.setAttribute('aria-expanded','true');}
 })();
