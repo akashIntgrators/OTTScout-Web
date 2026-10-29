@@ -125,7 +125,10 @@ def enrich(catalog, db, client, now, priority_ids=()):
         if title['id'] in priority_ids or not row or row[0] != identity(title) or now-row[1] >= (30*DAY if row[2] else 7*DAY):
             pending.append(title)
     # Latest weekly additions first, then remaining uncached titles, then expired entries.
-    pending.sort(key=lambda t:(t['id'] not in priority_ids, not bool(t.get('tmdbId') or t.get('imdbId')), t['id'] in cached, -(t.get('weeklyUpdatedAt') or 0), t['id']))
+    pending.sort(key=lambda t:(t['id'] not in priority_ids,
+        not (t.get('weekly') and isinstance(t.get('weeklyUpdatedAt'), (int, float)) and now-7*DAY <= t['weeklyUpdatedAt'] <= now),
+        not bool(t.get('tmdbId') or t.get('imdbId')), t['id'] in cached,
+        -(t.get('weeklyUpdatedAt') or 0), t['id']))
     status, message = ('ready','TMDB batch completed') if client else ('missing-token','TMDB token not configured; no requests made')
     if client:
         for title in pending:
@@ -143,6 +146,13 @@ def enrich(catalog, db, client, now, priority_ids=()):
             cached[title['id']] = (identity(title), now, body)
     matched = 0
     for title in titles:
+        # Enrichment may run twice on the same in-memory snapshot. Never relabel
+        # an old TMDB value as provider data or retain a match for a changed ID.
+        provider_original = title.get('providerOriginalLanguage',
+            title.get('originalLanguage') if title.get('originalLanguageSource') != 'TMDB' else None)
+        title['providerOriginalLanguage'] = provider_original
+        title['originalLanguage'] = provider_original
+        title.pop('tmdb', None)
         row = cached.get(title['id'])
         title['tmdbMatchStatus'] = 'unmatched' if row and row[0] == identity(title) and not row[2] else 'pending'
         title['originalLanguageSource'] = 'Streaming Availability API' if title.get('originalLanguage') else None
@@ -150,8 +160,9 @@ def enrich(catalog, db, client, now, priority_ids=()):
             metadata = json.loads(row[2])
             title['tmdbMatchStatus'] = 'matched'
             title['tmdb'] = {**metadata, 'checkedAt':row[1]}
-            title['originalLanguage'] = metadata['originalLanguage']
-            title['originalLanguageSource'] = 'TMDB' if metadata['originalLanguage'] else None
+            if metadata['originalLanguage']:
+                title['originalLanguage'] = metadata['originalLanguage']
+                title['originalLanguageSource'] = 'TMDB'
             matched += 1
     counts = {state:sum(t['tmdbMatchStatus']==state for t in titles) for state in ('matched','pending','unmatched')}
     catalog['tmdbEnrichment'] = {'status':status,'message':message,'matched':matched,'total':len(titles),'pending':counts['pending'],'unmatched':counts['unmatched'],

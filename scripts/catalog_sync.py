@@ -41,6 +41,7 @@ def open_db(path):
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS titles (id TEXT PRIMARY KEY, body TEXT NOT NULL, first_seen INTEGER NOT NULL, last_checked INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, title_id TEXT NOT NULL, platform TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS change_pages (kind TEXT NOT NULL, position INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(kind,position));
     CREATE TABLE IF NOT EXISTS requests (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, endpoint TEXT NOT NULL, status INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, status TEXT NOT NULL, requests INTEGER NOT NULL, changed INTEGER NOT NULL, message TEXT NOT NULL);
     ''')
@@ -325,6 +326,66 @@ def catalog_backfill_status(db, mapping):
             'totalTasks': len(tasks), 'pages': sum(task.get('pages', 0) for task in tasks),
             'platforms': {platform:{kind:get_meta(db,'catalog_backfill_v1:'+service+':'+kind,{'pages':0,'complete':False})['pages'] for kind in ('movie','series')} for platform,service in mapping.items()}}
 
+def sync_change_feed(db, client, mapping, kind, started, now):
+    """Stage validated pages durably; apply a frozen query only after its last page."""
+    key = 'change_window_v2:' + kind
+    state = get_meta(db, key)
+    if not state:
+        since = get_meta(db, 'watermark:' + kind, started)
+        if now - since > 30 * DAY:
+            raise SyncError('Change history gap exceeds 30 days; a new baseline is required')
+        state = {'from':max(since-60, now-30*DAY), 'to':now, 'cursor':None, 'seen':[], 'pages':0}
+        db.execute('DELETE FROM change_pages WHERE kind=?', (kind,))
+        set_meta(db, key, state)
+        db.commit()
+    if now - state['from'] > 30 * DAY:
+        raise SyncError('Saved change query expired; review before starting a new baseline')
+    while True:
+        params = {'country':'in', 'catalogs':','.join(mapping.values()), 'change_type':kind,
+                  'item_type':'show', 'from':state['from'], 'to':state['to'], 'order_direction':'asc'}
+        if state['cursor']:
+            params['cursor'] = state['cursor']
+        page = client.get('/changes', params)
+        if not isinstance(page, dict) or not isinstance(page.get('hasMore'), bool) or not isinstance(page.get('shows'), dict) or not isinstance(page.get('changes'), list):
+            raise SyncError('Invalid changes response')
+        cursor = page.get('nextCursor')
+        if page['hasMore'] and (not isinstance(cursor, str) or not cursor or cursor == state['cursor'] or cursor in state['seen']):
+            raise SyncError('Missing or repeated changes cursor')
+        for item in page['shows'].values():
+            normalize(item, mapping, now)
+        for event in page['changes']:
+            if not isinstance(event, dict) or str(event.get('showId')) not in {str(k) for k in page['shows']}:
+                raise SyncError('Change lacks a current show record; catalog retained')
+            if not isinstance(event.get('timestamp'), int) or not state['from'] <= event['timestamp'] <= state['to']:
+                raise SyncError('Change has invalid event date; catalog retained')
+        db.execute('INSERT INTO change_pages VALUES (?,?,?)', (kind, state['pages'], json.dumps({'page':page,'checkedAt':now})))
+        state = {**state, 'cursor':cursor if page['hasMore'] else None,
+                 'seen':state['seen'] + ([cursor] if page['hasMore'] else []), 'pages':state['pages']+1}
+        set_meta(db, key, state)
+        # Final-page staging and application are one transaction. A crash cannot
+        # advance the watermark or require re-fetching earlier committed pages.
+        if page['hasMore']:
+            db.commit()
+            continue
+        changed = 0
+        reverse = {v:k for k,v in mapping.items()}
+        for raw, in db.execute('SELECT body FROM change_pages WHERE kind=? ORDER BY position', (kind,)).fetchall():
+            saved = json.loads(raw)
+            for item in saved['page']['shows'].values():
+                changed += save_show(db, item, mapping, saved['checkedAt'])
+            for event in saved['page']['changes']:
+                service = event.get('service', {}).get('id')
+                if event['timestamp'] <= get_meta(db, 'baseline_complete', now) or service not in reverse:
+                    continue
+                event_id = json.dumps([event.get('showId'), service, kind, event['timestamp'], event.get('link')])
+                db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)',
+                    (event_id, 'motn:'+str(event['showId']), reverse[service], kind, event['timestamp']))
+        set_meta(db, 'watermark:' + kind, state['to'])
+        set_meta(db, key, None)
+        db.execute('DELETE FROM change_pages WHERE kind=?', (kind,))
+        db.commit()
+        return changed
+
 def sync(db, client, now):
     coverage = get_meta(db, 'coverage')
     if not coverage or now - coverage['checkedAt'] >= DAY:
@@ -365,44 +426,13 @@ def sync(db, client, now):
         set_meta(db, 'baseline_complete', now)
         db.commit()
     changed += backfill_recent(db, client, mapping, now)
-    # A separate watermark per change type avoids repeating successfully completed work.
+    # Large change feeds resume from committed pages under the same request caps.
     for change_type in ('new', 'updated', 'removed'):
-        since = get_meta(db, 'watermark:' + change_type, started)
-        if now - since > 30 * DAY:
-            raise SyncError('Change history gap exceeds 30 days; a new baseline is required')
-        params = {'country': 'in', 'catalogs': ','.join(mapping.values()),
-                  'change_type': change_type, 'item_type': 'show',
-                  'from': max(since - 60, now - 30 * DAY), 'to': now, 'order_direction': 'asc'}
-        # Stage all pages. A failed/truncated query must not advance its watermark.
-        staged = {}
-        events = []
-        for page in read_pages(client, '/changes', params, True):
-            if not isinstance(page.get('changes'), list):
-                raise SyncError('Invalid changes response')
-            for key, show in page['shows'].items():
-                normalize(show, mapping, now)
-                staged[key] = show
-            for event in page['changes']:
-                if not isinstance(event, dict) or str(event.get('showId')) not in {str(k) for k in page['shows']}:
-                    raise SyncError('Change lacks a current show record; catalog retained')
-                events.append(event)
-        for show in staged.values():
-            changed += save_show(db, show, mapping, now)
-        reverse = {v: k for k, v in mapping.items()}
-        for event in events:
-            if not isinstance(event.get('timestamp'), int) or event['timestamp'] <= get_meta(db, 'baseline_complete', now):
-                continue
-            service_id = event.get('service', {}).get('id')
-            if service_id not in reverse:
-                continue
-            event_id = json.dumps([event.get('showId'), service_id, change_type, event['timestamp'], event.get('link')])
-            db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)',
-                       (event_id, 'motn:' + str(event['showId']), reverse[service_id], change_type, event['timestamp']))
-        set_meta(db, 'watermark:' + change_type, now)
-        db.commit()
+        changed += sync_change_feed(db, client, mapping, change_type, started, now)
     changed += backfill_original_languages(db, client, mapping, now)
     changed += backfill_catalog(db, client, mapping, now, max_pages=max(0,min(6,int(os.environ.get('CATALOG_BACKFILL_PAGES','2')))))
-    set_meta(db, 'last_success', now)
+    # A resumed feed covers its original frozen window, not the resume time.
+    set_meta(db, 'last_success', min(get_meta(db, 'watermark:'+kind, now) for kind in ('new','updated','removed')))
     db.commit()
     return changed
 
@@ -433,6 +463,7 @@ def report(db, now):
             'lastSuccessfulUpdate': stamp(get_meta(db, 'last_success')) if get_meta(db, 'last_success') else None,
             'baselineComplete': bool(get_meta(db, 'baseline_complete')),
             'recentHistory': get_meta(db, 'recent_backfill_v1'),
+            'pendingChangeQueries': {kind: get_meta(db, 'change_window_v2:'+kind) for kind in ('new','updated','removed') if get_meta(db, 'change_window_v2:'+kind)},
             'catalogScope': 'Gradually imported platform catalogues plus tracked additions; coverage is still partial and not an episode tracker.',
             'catalogBackfill': catalog_backfill_status(db,coverage.get('mapping',{})),
             'runs': [{'at': stamp(r[0]), 'status': r[1], 'requests': r[2], 'changedRecords': r[3], 'message': r[4]} for r in runs],
@@ -455,10 +486,13 @@ def export_catalog(db, path, now):
         # Only provider-reported new events qualify, including explicitly fetched history.
         recent = db.execute("SELECT platform,MAX(at) FROM events WHERE title_id=? AND kind='new' AND at>=? AND at<=? GROUP BY platform", (title['id'], now - 7 * DAY, now)).fetchall()
         title['weeklyPlatforms'] = [row[0] for row in recent]
+        title['weeklyEvents'] = [{'platform': row[0], 'addedAt': row[1]} for row in recent]
         title['weeklyUpdatedAt'] = max((row[1] for row in recent), default=None)
         title['weekly'] = bool(title['weeklyPlatforms'])
         rows.append(title)
+    latest_run = db.execute('SELECT status FROM runs ORDER BY id DESC LIMIT 1').fetchone()
     output = {'schemaVersion': 1, 'mode': 'live', 'updatedAt': stamp(get_meta(db, 'last_success')),
+              'syncStatus': latest_run[0] if latest_run else 'unknown',
               'scope': 'Gradually expanded streaming catalog plus tracked additions; search covers imported titles.',
               'catalogBackfill': catalog_backfill_status(db, get_meta(db, 'coverage', {}).get('mapping', {})),
               'coverage': report(db, now)['supportedPlatforms'], 'missingPlatforms': report(db, now)['missingPlatforms'],
@@ -479,6 +513,7 @@ def main():
     parser.add_argument('--export', default='data/catalog.json')
     parser.add_argument('--initialize', action='store_true')
     parser.add_argument('--export-cached', action='store_true', help='Export the last validated streaming snapshot without provider requests')
+    parser.add_argument('--allow-cached-on-limit', action='store_true', help='Allow metadata/site updates from cached data when the streaming request cap is reached')
     args = parser.parse_args()
     db = open_db(args.db)
     now = int(time.time())
@@ -526,9 +561,10 @@ def main():
     # Only a fully successful run may replace the last public snapshot.
     if status == 'success':
         export_catalog(db, args.export, now)
+    cached_on_limit = status == 'limited' and args.allow_cached_on_limit and export_catalog(db, args.export, now)
     print(json.dumps({k: v for k, v in result.items() if k != 'runs'}, indent=2))
     print(f'{status}: {message}; requests this run: {calls}')
-    return 0 if status in ('success', 'complete') else 1
+    return 0 if status in ('success', 'complete') or cached_on_limit else 1
 
 if __name__ == '__main__':
     sys.exit(main())
