@@ -290,7 +290,7 @@ function activeFilterChips() {
   const chips=[];
   function chip(label,reset){const button=element('button',label+' ×','filter-chip');button.type='button';button.setAttribute('aria-label','Remove filter: '+label);button.onclick=()=>{reset();visibleLimit=PAGE_SIZE;updateSelections();renderGenres();renderOriginals();render();$('#reset-filters').focus();};chips.push(button);}
   const brief=items=>items.length ? items.slice(0,2).join(', ')+(items.length>2?` +${items.length-2}`:''):'None';
-  if(selectedPlatforms.size!==platforms.length)chip('Platforms: '+brief([...selectedPlatforms]),()=>{selectedPlatforms.clear();platforms.forEach(x=>selectedPlatforms.add(x));persist('ottscout-platforms',selectedPlatforms);});
+  if(selectedPlatforms.size!==availablePlatforms().length)chip('Platforms: '+brief([...selectedPlatforms]),()=>{selectedPlatforms.clear();availablePlatforms().forEach(x=>selectedPlatforms.add(x));persist('ottscout-platforms',selectedPlatforms);});
   if(selectedLanguages.size!==languages.length)chip('Watch in: '+brief([...selectedLanguages]),()=>{selectedLanguages.clear();languages.forEach(x=>selectedLanguages.add(x));persist('ottscout-languages',selectedLanguages);});
   if(selectedOriginals!==null)chip('Originally: '+brief([...selectedOriginals]),()=>{selectedOriginals=null;persist('ottscout-originals',['*']);});
   if(selectedGenres!==null)chip('Genres: '+brief([...selectedGenres]),()=>{selectedGenres=null;persist('ottscout-genres',['*']);});
@@ -318,8 +318,13 @@ function openReport(title) {
   $('#report-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#report-preview').value);$('#report-feedback').textContent='Report copied.';}catch{$('#report-preview').focus();$('#report-preview').select();$('#report-feedback').textContent='Select and copy the report below.';}};
   $('#report-close').onclick=()=>dialog.close();update();dialog.showModal();$('#report-category').focus();
 }
+function availablePlatforms() {
+  if (!liveCatalog) return platforms;
+  const present=new Set(titles.flatMap(t=>(t.offers || []).map(o=>o.platform)));
+  return platforms.filter(p=>!liveCatalog.missingPlatforms.includes(p) && present.has(p));
+}
 function renderOptions(kind) {
-  const list = kind === 'platforms' ? platforms : languages;
+  const list = kind === 'platforms' ? availablePlatforms() : languages;
   const selected = kind === 'platforms' ? selectedPlatforms : selectedLanguages;
   $('#' + kind).replaceChildren(...list.map(name => {
     const label = element('label');
@@ -334,14 +339,13 @@ function renderOptions(kind) {
       render();
     };
     label.append(checkbox, element('span',name));
-    if (kind === 'platforms' && liveCatalog?.missingPlatforms.includes(name)) label.append(element('small','Not covered'));
     return label;
   }));
 }
 function updateSelections() {
-  $('#platform-summary small').textContent = selectedPlatforms.size === platforms.length ? 'All' : `${selectedPlatforms.size}`;
+  $('#platform-summary small').textContent = selectedPlatforms.size === availablePlatforms().length ? 'All' : `${selectedPlatforms.size}`;
   $('#language-summary small').textContent = selectedLanguages.size === languages.length ? 'All' : `${selectedLanguages.size}`;
-  $('#selection-status').textContent = `${selectedPlatforms.size === platforms.length ? 'All platforms' : `${selectedPlatforms.size} platform${selectedPlatforms.size === 1 ? '' : 's'}`} · ${selectedLanguages.size === languages.length ? 'All six audio languages' : `${selectedLanguages.size} language${selectedLanguages.size === 1 ? '' : 's'}`}`;
+  $('#selection-status').textContent = `${selectedPlatforms.size === availablePlatforms().length ? 'All platforms' : `${selectedPlatforms.size} platform${selectedPlatforms.size === 1 ? '' : 's'}`} · ${selectedLanguages.size === languages.length ? 'All six audio languages' : `${selectedLanguages.size} language${selectedLanguages.size === 1 ? '' : 's'}`}`;
   for (const kind of ['platforms','languages']) {
     const selected = kind === 'platforms' ? selectedPlatforms : selectedLanguages;
     document.querySelectorAll(`#${kind} input`).forEach(input => { input.checked = selected.has(input.value); });
@@ -410,7 +414,7 @@ function render() {
   announceResults(`${{weekly:'This week',discover:'Discover',watchlist:'Watchlist'}[view]}: ${found.length} ${found.length===1?'title matches':'titles match'}. ${Math.min(visibleLimit,found.length)} shown.${audioDescriptionOnly?' Only provider-reported description languages matching Watch in are included; India playback is unverified.':''}`);
 }
 function resetFilters() {
-  selectedPlatforms.clear(); platforms.forEach(name=>selectedPlatforms.add(name));
+  selectedPlatforms.clear(); availablePlatforms().forEach(name=>selectedPlatforms.add(name));
   selectedLanguages.clear(); languages.forEach(name=>selectedLanguages.add(name));
   persist('ottscout-platforms',selectedPlatforms); persist('ottscout-languages',selectedLanguages);
   selectedOriginals=null;persist('ottscout-originals',['*']);renderOriginals();
@@ -436,6 +440,7 @@ $('#genre-clear').onclick=()=>{selectedGenres=new Set();persist('ottscout-genres
 $('#original-only').checked=originalOnly;
 $('#original-only').onchange=()=>{originalOnly=$('#original-only').checked;persist('ottscout-original-only',[originalOnly]);visibleLimit=PAGE_SIZE;render();};
 $('#restore-hidden').onclick=()=>{dismissed.clear();persist('ottscout-dismissed',dismissed);render();};
+$('#search').onkeydown=event=>{if(event.key==='Enter' && !event.isComposing){event.preventDefault();$('#search').blur();$('#heading').focus();}};
 $('#search').oninput=()=>{visibleLimit=PAGE_SIZE;if($('#search').value.trim() && view==='weekly')setView('discover');else render();};
 $('#reset-filters').onclick=resetFilters;
 $('#audio-description-only').checked=audioDescriptionOnly;
@@ -451,7 +456,7 @@ for (const attribute of ['select-all','clear']) document.querySelectorAll(`[data
   button.onclick=()=>{
     const kind=button.dataset[attribute==='select-all'?'selectAll':'clear'];
     const selected=kind==='platforms'?selectedPlatforms:selectedLanguages;
-    const options=kind==='platforms'?platforms:languages;
+    const options=kind==='platforms'?availablePlatforms():languages;
     selected.clear(); if(attribute==='select-all') options.forEach(name=>selected.add(name));
     persist('ottscout-'+kind,selected);visibleLimit=PAGE_SIZE;updateSelections();render();
   };
@@ -485,6 +490,7 @@ async function loadCatalog() {
       for(const offer of title.offers)if(!platforms.includes(offer.platform)||!Array.isArray(offer.audio)||!offer.audio.every(x=>typeof x==='string')||!Array.isArray(offer.subtitles)||!offer.subtitles.every(x=>typeof x==='string'))throw new Error('Invalid offer');
     }
     liveCatalog=data;titles=data.titles;
+    for (const p of selectedPlatforms) if (!availablePlatforms().includes(p)) selectedPlatforms.delete(p);
     renderGenres();renderOriginals();
     $('#catalog-status').hidden=true;
     renderOptions('platforms');updateSelections();render();
