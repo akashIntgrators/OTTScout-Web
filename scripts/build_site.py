@@ -79,7 +79,7 @@ def build(root=ROOT, now=None):
 <meta property="og:description" content="{escape(description,quote=True)}"><meta property="og:url" content="{canonical}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="OTTScout"><meta name="twitter:card" content="summary">
 <link rel="icon" href="/assets/ottscout-icon.svg?v=1" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=1" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OTTScout">
-{structured}<link rel="stylesheet" href="/style.css?v=layout11"></head><body>
+{structured}<link rel="stylesheet" href="/style.css?v=watch12"></head><body>
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="site-header"><a class="brand" href="/" aria-label="OTTScout home">OTT<span>Scout</span></a><span class="region">Streaming in India</span></header>
 <nav class="seo-nav seo-navigation" aria-label="Browse streaming">{navigation}</nav><main id="main" class="seo-page" tabindex="-1">
