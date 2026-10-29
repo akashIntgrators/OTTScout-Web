@@ -92,3 +92,11 @@ audioDescriptionOnly=false;
 if(matchingOffers({offers:[described]}).length)throw Error('Normal Hindi audio filter used a Hindi description as ordinary Hindi audio');
 `,context);
 console.log('Description language, source identity, expiry and unknown-state scenarios passed.');
+
+vm.runInContext(`
+if(rentalLabel([{type:'rent'}])!=='Rent only')throw Error('Rent-only badge missing');
+if(rentalLabel([{type:'rent'},{type:'subscription'}])!=='Rent option')throw Error('Mixed offer misleading');
+if(rentalLabel([{type:'rent'},{type:'buy'}])!=='Rent option')throw Error('Buy option hidden');
+if(rentalLabel([{type:'subscription'}])!=='')throw Error('Nonrental labelled');
+`,context);
+console.log('Rental-only and mixed viewing options labelled accurately.');
