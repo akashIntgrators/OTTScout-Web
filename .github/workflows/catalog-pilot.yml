@@ -74,7 +74,7 @@ jobs:
           if [[ "$METADATA_ONLY" == 'true' ]]; then
             python scripts/catalog_sync.py --export-cached
           else
-            python scripts/catalog_sync.py "${args[@]}"
+            python scripts/catalog_sync.py --allow-cached-on-limit "${args[@]}"
           fi
       - name: Enrich original language and genres from TMDB
         if: success()
@@ -103,13 +103,16 @@ jobs:
       - name: Decide whether this run may publish
         id: publication
         if: success()
+        env:
+          METADATA_ONLY: ${{ inputs.metadata_only }}
         shell: bash
         run: |
           python - <<'PYCODE' >> "$GITHUB_OUTPUT"
-          import json
+          import json, os
           from pathlib import Path
           report = json.loads(Path('reports/pilot.json').read_text())
-          print('ready=' + str(report['runs'][-1]['status'] == 'success' and Path('data/catalog.json').exists()).lower())
+          eligible = os.environ.get('METADATA_ONLY') == 'true' or (report['runs'] and report['runs'][-1]['status'] in ('success', 'limited'))
+          print('ready=' + str(bool(eligible and report['lastSuccessfulUpdate'] and Path('data/catalog.json').exists())).lower())
           PYCODE
       - name: Prepare website-only Pages artifact
         if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
