@@ -334,12 +334,13 @@ def sync_change_feed(db, client, mapping, kind, started, now):
         since = get_meta(db, 'watermark:' + kind, started)
         if now - since > 30 * DAY:
             raise SyncError('Change history gap exceeds 30 days; a new baseline is required')
-        state = {'from':max(since-60, now-30*DAY), 'to':now, 'cursor':None, 'seen':[], 'pages':0}
+        state = {'from':max(since-60, now-30*DAY), 'to':now, 'cursor':None, 'seen':[], 'pages':0, 'mapping':dict(mapping)}
         db.execute('DELETE FROM change_pages WHERE kind=?', (kind,))
         set_meta(db, key, state)
         db.commit()
     if now - state['from'] > 30 * DAY:
         raise SyncError('Saved change query expired; review before starting a new baseline')
+    mapping = state.get('mapping', mapping)
     while True:
         params = {'country':'in', 'catalogs':','.join(mapping.values()), 'change_type':kind,
                   'item_type':'show', 'from':state['from'], 'to':state['to'], 'order_direction':'asc'}
