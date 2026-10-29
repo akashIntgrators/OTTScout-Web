@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "reports": [
+    {
+      "platform": "Netflix",
+      "providerTitleId": "81498621",
+      "title": "KPop Demon Hunters",
+      "type": "Movie",
+      "year": 2025,
+      "languages": [
+        "English",
+        "Hindi"
+      ],
+      "sourceURL": "https://www.netflix.com/in/title/81498621",
+      "checkedAt": 1793212200,
+      "indiaPlaybackVerified": false
+    },
+    {
+      "platform": "Netflix",
+      "providerTitleId": "80230399",
+      "title": "Extraction",
+      "type": "Movie",
+      "year": 2020,
+      "languages": [
+        "English",
+        "Hindi"
+      ],
+      "sourceURL": "https://www.netflix.com/in/title/80230399",
+      "checkedAt": 1793212200,
+      "indiaPlaybackVerified": false
+    },
+    {
+      "platform": "Netflix",
+      "providerTitleId": "83238479",
+      "title": "Dorothy",
+      "type": "Movie",
+      "year": 2026,
+      "languages": [
+        "Hindi",
+        "Tamil"
+      ],
+      "sourceURL": "https://www.netflix.com/in/title/83238479",
+      "checkedAt": 1793212200,
+      "indiaPlaybackVerified": false
+    },
+    {
+      "platform": "Netflix",
+      "providerTitleId": "82673779",
+      "title": "Funky",
+      "type": "Movie",
+      "year": 2026,
+      "languages": [
+        "Hindi",
+        "Telugu"
+      ],
+      "sourceURL": "https://www.netflix.com/in/title/82673779",
+      "checkedAt": 1793212200,
+      "indiaPlaybackVerified": false
+    },
+    {
+      "platform": "Netflix",
+      "providerTitleId": "82072500",
+      "title": "Idhayam Murali",
+      "type": "Movie",
+      "year": 2026,
+      "languages": [
+        "Hindi",
+        "Tamil"
+      ],
+      "sourceURL": "https://www.netflix.com/in/title/82072500",
+      "checkedAt": 1793212200,
+      "indiaPlaybackVerified": false
+    },
+    {
+      "platform": "Netflix",
+      "providerTitleId": "81186049",
+      "title": "Day Shift",
+      "type": "Movie",
+      "year": 2022,
+      "languages": [
+        "English"
+      ],
+      "sourceURL": "https://www.netflix.com/in/title/81186049",
+      "checkedAt": 1793212200,
+      "indiaPlaybackVerified": false
+    },
+    {
+      "platform": "Netflix",
+      "providerTitleId": "80174608",
+      "title": "Love, Death & Robots",
+      "type": "Series",
+      "year": null,
+      "languages": [
+        "English",
+        "Hindi"
+      ],
+      "sourceURL": "https://www.netflix.com/in/title/80174608",
+      "checkedAt": 1793212200,
+      "indiaPlaybackVerified": false
+    }
+  ]
+}
