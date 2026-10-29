@@ -18,6 +18,7 @@ let titles = sampleTitles;
 let liveCatalog = null;
 let view = 'weekly';
 let contentType = 'all';
+let weeklyKind = 'all';
 let visibleLimit = PAGE_SIZE;
 const storedGenres = readList('ottscout-genres');
 let selectedGenres = storedGenres && !storedGenres.includes('*') ? new Set(storedGenres) : null;
@@ -52,9 +53,39 @@ function secureURL(value) {
 function weeklyTitle(title) {
   if (!liveCatalog) return Boolean(title.weekly);
   if (!title.weekly || !title.weeklyPlatforms.length) return false;
-  if (!Number.isFinite(title.weeklyUpdatedAt)) return true; // Older published schema.
+  if (!Number.isFinite(title.weeklyUpdatedAt)) return false;
   const now = Date.now() / 1000;
   return title.weeklyUpdatedAt <= now && title.weeklyUpdatedAt >= now - 7 * DAY;
+}
+function weeklyOfferDate(title, offer, now = Date.now() / 1000) {
+  const added = Array.isArray(title.weeklyEvents)
+    ? title.weeklyEvents.find(event => event.platform === offer.platform)?.addedAt
+    : title.weeklyPlatforms?.includes(offer.platform) ? title.weeklyUpdatedAt : null;
+  if (!Number.isFinite(added) || added < now - 7 * DAY || added > now) return null;
+  // A new offer on a platform does not make every older offer new.
+  if (Number.isFinite(offer.availableSince) && offer.availableSince > 0) {
+    return offer.availableSince >= now - 7 * DAY && offer.availableSince <= now ? offer.availableSince : null;
+  }
+  return added;
+}
+function olderMovie(title, now = Date.now()) {
+  const year = Number(new Intl.DateTimeFormat('en', {year:'numeric', timeZone:'Asia/Kolkata'}).format(new Date(now)));
+  return title.type === 'Movie' && Number.isInteger(title.year) && title.year > 1800 && title.year < year;
+}
+function weeklyKindMatches(title) {
+  return weeklyKind === 'all' || (weeklyKind === 'older' ? olderMovie(title) : !olderMovie(title));
+}
+function additionLabel(title) {
+  return olderMovie(title) ? `Older movie · ${title.year}` : title.type === 'Series' ? 'Series addition' : 'Movie addition';
+}
+function checkedDate(timestamp) {
+  return Number.isFinite(timestamp) && timestamp > 0 && timestamp <= Date.now()/1000
+    ? new Date(timestamp * 1000).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'}) : 'Unverified';
+}
+function metadataExplanation(title) {
+  if (title.tmdbMatchStatus === 'unmatched') return 'No confident TMDB match. Original language and genres are not guessed from available audio.';
+  if (!title.tmdb) return 'TMDB lookup pending. A provider-reported original language may still be shown.';
+  return `Matched by ${({'provider-id':'provider TMDB ID','imdb-id':'IMDb ID','exact-title-year':'unique exact title and year'})[title.tmdb.matchMethod] || 'TMDB metadata'}. Metadata checked ${checkedDate(title.tmdb.checkedAt)}. Missing source details remain Unverified.`;
 }
 function originalBucket(title) {
   return title.originalLanguage ? languages.includes(title.originalLanguage) ? title.originalLanguage : 'Other languages' : 'Unverified';
@@ -68,7 +99,7 @@ function matchingOffers(title, weeklyOnly = view === 'weekly') {
   return offers.filter(offer => matchingOriginal(title) && selectedPlatforms.has(offer.platform)
     && (!subscriptionOnly || (offer.type==='subscription' && !offer.addon))
     && offer.audio.some(language => selectedLanguages.has(language) && (!originalOnly || language === title.originalLanguage))
-    && (!weeklyOnly || !liveCatalog || title.weeklyPlatforms.includes(offer.platform)))
+    && (!weeklyOnly || !liveCatalog || weeklyOfferDate(title, offer) !== null))
     .sort((a,b) => (priority[a.type] ?? 6) - (priority[b.type] ?? 6) || a.platform.localeCompare(b.platform));
 }
 function formatLanguages(available) {
@@ -143,6 +174,10 @@ function cardFor(title) {
   if (liveCatalog) name.href = '/titles/' + encodeURIComponent(title.id.replace(/^motn:/, '')) + '/';
   heading.append(name, document.createTextNode(' '), element('span', '· Audio: ' + formatLanguages(audio), 'card-languages'));
   body.append(heading, element('div', 'Original language: ' + formatLanguages(title.originalLanguage ? [title.originalLanguage] : []), 'original-language'));
+  if (liveCatalog && view === 'weekly') {
+    const added = Math.max(...offers.map(offer => weeklyOfferDate(title, offer) || 0));
+    body.append(element('p', `${additionLabel(title)} · Added ${checkedDate(added)}`, 'addition-label'));
+  }
   if (view !== 'watchlist') {
     const dismiss = element('button', 'Hide title', 'dismiss-title');
     dismiss.type = 'button';
@@ -152,16 +187,27 @@ function cardFor(title) {
   }
   const options = element('details', undefined, 'watch-options');
   options.append(element('summary', 'Where to watch'));
+  if (liveCatalog) {
+    options.append(element('p', metadataExplanation(title), 'verification-note'));
+    if (title.originalLanguage) options.append(element('p', `Original-language source: ${title.originalLanguageSource || 'Source unverified'}`, 'verification-note'));
+    options.append(element('p', `Availability checked ${checkedDate(title.lastCheckedAt)} (IST). This is the last title check, not the latest catalogue run.`, 'verification-note'));
+    if (view === 'weekly') options.append(element('p', 'Added dates are provider-reported availability, not confirmed OTT premiere dates. Series additions do not confirm a new season or episode.', 'verification-note'));
+  }
   if(title.tmdb) {
     const metadata=element('div',`Genres: ${title.tmdb.genres.join(' · ') || 'Unverified'}`, 'audio');
     const credit=element('a','Original language & genres: TMDB ↗','provider');
     credit.href='https://www.themoviedb.org/'+title.tmdb.mediaType+'/'+title.tmdb.id;credit.target='_blank';credit.rel='noopener noreferrer';
     options.append(metadata,credit);
   }
-  offers.forEach(offer => options.append(offerBody(offer)));
+  offers.forEach(offer => {
+    const item = offerBody(offer);
+    if (liveCatalog && view === 'weekly') item.append(element('div', `Reported added ${checkedDate(weeklyOfferDate(title, offer))}${Number.isFinite(offer.availableSince) && offer.availableSince > 0 ? '' : ' · Offer date unverified; platform addition shown'}`, 'audio'));
+    options.append(item);
+  });
   const report = element('button','Report incorrect details','report-button');
   report.type='button'; report.onclick=()=>openReport(title); options.append(report);
   body.append(options);
+  if (liveCatalog) body.append(element('p', `Availability checked ${checkedDate(title.lastCheckedAt)}`, 'checked-date'));
   card.append(poster, body);
   return card;
 }
@@ -306,16 +352,17 @@ function render() {
     && (view === 'watchlist' || !dismissed.has(title.id))
     && (contentType === 'all' || title.type === contentType)
     && (view !== 'watchlist' || saved.has(title.id))
-    && (view !== 'weekly' || weeklyTitle(title)));
-  found.sort((a,b) => view === 'weekly' ? (b.weeklyUpdatedAt || 0) - (a.weeklyUpdatedAt || 0) || a.title.localeCompare(b.title)
+    && (view !== 'weekly' || (weeklyTitle(title) && weeklyKindMatches(title))));
+  found.sort((a,b) => view === 'weekly' ? Math.max(...matchingOffers(b).map(o=>weeklyOfferDate(b,o)||0)) - Math.max(...matchingOffers(a).map(o=>weeklyOfferDate(a,o)||0)) || a.title.localeCompare(b.title)
     : (b.year || 0) - (a.year || 0) || a.title.localeCompare(b.title));
   $('#count').textContent = saved.size;
   $('#restore-hidden').hidden = dismissed.size === 0;
   $('#restore-hidden').textContent = `Restore hidden titles (${dismissed.size})`;
   $('#weekly-count').textContent = titles.filter(title => matchingGenres(title) && !dismissed.has(title.id) && weeklyTitle(title) && matchingOffers(title,true).length).length;
-  $('#heading').textContent = {discover:'Find your next favourite',weekly:'Fresh on your platforms',watchlist:'Saved for a good night in'}[view];
+  $('#weekly-kind').hidden = view !== 'weekly';
+  $('#heading').textContent = {discover:'Find your next favourite',weekly:'Added this week',watchlist:'Saved for a good night in'}[view];
   $('#view-eyebrow').textContent = {discover:'A LITTLE DISCOVERY',weekly:'THE LAST SEVEN DAYS',watchlist:'YOUR PERSONAL PICKS'}[view];
-  $('#description').textContent = view === 'weekly' ? liveCatalog ? 'New streaming additions reported by our provider. Dates are not confirmed premiere dates.' : 'Illustrative weekly picks from the sample catalog.'
+  $('#description').textContent = view === 'weekly' ? liveCatalog ? 'Provider-reported additions, including older movies and series updates. OTT premiere dates are not verified; a series addition does not confirm a new season.' : 'Illustrative weekly picks from the sample catalog.'
     : view === 'watchlist' ? 'Your watchlist is saved on this browser. Filters apply here too.'
       : liveCatalog ? 'Movies and series across your selected platforms. Audio is listed per platform.' : 'Explore the sample catalog while live data is unavailable.';
   $('#result-count').textContent = `${found.length} ${found.length === 1 ? 'title' : 'titles'}`;
@@ -334,7 +381,8 @@ function resetFilters() {
   subscriptionOnly=false;$('#subscription-only').checked=false;persist('ottscout-subscription-only',[false]);
   selectedGenres=null; persist('ottscout-genres',['*']);renderGenres();
   originalOnly=false; $('#original-only').checked=false; persist('ottscout-original-only',[false]);
-  $('#search').value=''; contentType='all'; visibleLimit=PAGE_SIZE;
+  $('#search').value=''; contentType='all'; weeklyKind='all'; visibleLimit=PAGE_SIZE;
+  document.querySelectorAll('#weekly-kind button').forEach(button=>button.setAttribute('aria-pressed',button.dataset.kind==='all'));
   document.querySelectorAll('#type button').forEach(button=>button.setAttribute('aria-pressed',button.dataset.type==='all'));
   updateSelections(); render();
 }
@@ -352,6 +400,10 @@ $('#original-only').onchange=()=>{originalOnly=$('#original-only').checked;persi
 $('#restore-hidden').onclick=()=>{dismissed.clear();persist('ottscout-dismissed',dismissed);render();};
 $('#search').oninput=()=>{visibleLimit=PAGE_SIZE;if($('#search').value.trim() && view==='weekly')setView('discover');else render();};
 $('#reset-filters').onclick=resetFilters;
+document.querySelectorAll('#weekly-kind button').forEach(button=>button.onclick=()=>{
+  weeklyKind=button.dataset.kind;visibleLimit=PAGE_SIZE;
+  document.querySelectorAll('#weekly-kind button').forEach(option=>option.setAttribute('aria-pressed',option===button));render();
+});
 $('#load-more').onclick=()=>{visibleLimit+=PAGE_SIZE;render();};
 for (const attribute of ['select-all','clear']) document.querySelectorAll(`[data-${attribute}]`).forEach(button=>{
   button.onclick=()=>{
@@ -386,15 +438,16 @@ async function loadCatalog() {
     for(const title of data.titles){
       if(title.tmdb && (!Array.isArray(title.tmdb.genres)||!title.tmdb.genres.every(g=>typeof g==='string')))throw new Error('Invalid genres');
       if(title.originalLanguage != null && typeof title.originalLanguage !== 'string')throw new Error('Invalid original language');
+      if(title.weeklyEvents !== undefined && (!Array.isArray(title.weeklyEvents) || title.weeklyEvents.some(event => !event || !platforms.includes(event.platform) || !Number.isFinite(event.addedAt))))throw new Error('Invalid addition history');
       if(typeof title.id!=='string'||!title.id.startsWith('motn:')||typeof title.title!=='string'||!['Movie','Series'].includes(title.type)||!Array.isArray(title.offers)||!Array.isArray(title.weeklyPlatforms)||!Number.isFinite(title.lastCheckedAt))throw new Error('Invalid title');
       for(const offer of title.offers)if(!platforms.includes(offer.platform)||!Array.isArray(offer.audio)||!offer.audio.every(x=>typeof x==='string')||!Array.isArray(offer.subtitles)||!offer.subtitles.every(x=>typeof x==='string'))throw new Error('Invalid offer');
     }
     liveCatalog=data;titles=data.titles;
     renderGenres();renderOriginals();
     const enrichment=data.tmdbEnrichment;
-    $('#metadata-status').textContent=enrichment ? `Original language known for ${titles.filter(t=>t.originalLanguage).length} of ${titles.length} titles. Genre coverage is still expanding${enrichment.status==='error'?' · Metadata update delayed':''}. Unmatched details remain Unverified.` : 'Language and genre details are still being verified. Unmatched details remain Unverified.';
+    $('#metadata-status').textContent=enrichment ? `Original language available for ${titles.filter(t=>t.originalLanguage).length.toLocaleString('en-IN')} of ${titles.length.toLocaleString('en-IN')} titles · TMDB matched: ${Number(enrichment.matched||0).toLocaleString('en-IN')} · Awaiting lookup: ${Number(enrichment.pending||0).toLocaleString('en-IN')} · No confident match: ${Number(enrichment.unmatched||0).toLocaleString('en-IN')}${enrichment.status==='error'?' · Metadata update delayed':''}. Missing details stay Unverified.` : 'Language and genre details are still being verified. Unmatched details remain Unverified.';
     const stale=Date.now()-Date.parse(data.updatedAt)>12*60*60*1000;
-    $('#catalog-status').textContent=`${stale?'Updates delayed · ':''}India catalog · Updated ${new Date(data.updatedAt).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZone:'Asia/Kolkata'})} IST · ${data.coverage?.length || 0} platforms covered`;
+    $('#catalog-status').textContent=`${data.syncStatus==='limited'?'Request cap reached · ':stale?'Updates delayed · ':''}India catalog · Last complete streaming update ${new Date(data.updatedAt).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZone:'Asia/Kolkata'})} IST · ${data.coverage?.length || 0} platforms covered`;
     $('#coverage-note').textContent=data.missingPlatforms.length?`Coverage note: ${data.missingPlatforms.join(' and ')} are not available from our current data provider. Search covers our imported catalog.`:'Availability is reported by our data provider. Search covers our imported catalog.';
     if(data.catalogBackfill && !data.catalogBackfill.complete) $('#coverage-note').textContent += ' Older titles are being added gradually.';
     renderOptions('platforms');updateSelections();render();
