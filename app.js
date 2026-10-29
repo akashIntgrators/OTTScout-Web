@@ -152,10 +152,14 @@ function formatLanguages(available) {
   return labels.slice(0,3).join(' · ') + (labels.length > 3 ? ` · +${labels.length - 3} more` : '');
 }
 const offerNames = {subscription:'Included with subscription', free:'Free to watch', rent:'Rent', buy:'Buy', addon:'Add-on subscription', sample:'Sample listing'};
+function rentalLabel(offers) {
+  if (!offers.some(o=>o.type==='rent')) return '';
+  return offers.every(o=>o.type==='rent') ? 'Rent only' : 'Rent option';
+}
 function providerLink(offer, titleLabel='') {
   const href = secureURL(offer.link);
   const link = element(href ? 'a' : 'div', offer.platform + (href ? ' ↗' : ''), 'provider');
-  if (href) { link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.setAttribute('aria-label', `${offer.platform}${titleLabel?' — watch '+titleLabel:''} (opens in a new tab)`); }
+  if (href) { link.href = href; link.rel = 'noopener noreferrer'; link.setAttribute('aria-label', `${offer.platform}${titleLabel?' — watch '+titleLabel:''}`); }
   return link;
 }
 function offerBody(offer, includeSubtitles = true, titleLabel='') {
@@ -164,18 +168,8 @@ function offerBody(offer, includeSubtitles = true, titleLabel='') {
   const audio = element('div', undefined, 'audio');
   audio.append(element('span','Audio: '), document.createTextNode(formatLanguages(offer.audio)));
   node.append(audio);
-  if (includeSubtitles) {
-    const subtitles = element('div', undefined, 'audio');
-    subtitles.append(element('span','Subtitles: '), document.createTextNode(formatLanguages(offer.subtitles)));
-    node.append(subtitles);
-  }
   const report=descriptionReport(offer);
-  if (report) {
-    node.append(element('p','Audio description reported: '+formatLanguages(report.languages),'ad-report'));
-    const source=element('a','View provider report ↗','provider');source.href=report.sourceURL;source.target='_blank';source.rel='noopener noreferrer';
-    source.setAttribute('aria-label',`Audio-description report for ${titleLabel || 'this title'} on ${offer.platform} (opens in a new tab)`);
-    node.append(source,element('p',`Report checked ${checkedDate(report.checkedAt)}. India playback is unverified; confirm the track in the player.`,'verification-note'));
-  } else node.append(element('p','Audio description: Unverified. Ordinary audio and subtitles do not confirm a description track.','verification-note'));
+  if (report) node.append(element('p','Description audio: '+formatLanguages(report.languages)+' · India playback unverified','ad-report'));
   return node;
 }
 function cardFor(title) {
@@ -221,6 +215,8 @@ function cardFor(title) {
   const name = element(liveCatalog ? 'a' : 'span', title.title);
   if (liveCatalog) name.href = '/titles/' + encodeURIComponent(title.id.replace(/^motn:/, '')) + '/';
   heading.append(name, document.createTextNode(' '), element('span', (audioDescriptionOnly?'· Description audio: ':'· Audio: ') + formatLanguages(audio), 'card-languages'));
+  const rental=rentalLabel(offers);
+  if (rental) heading.append(document.createTextNode(' '),element('span',rental,'rental-label'));
   body.append(heading, element('div', 'Original language: ' + formatLanguages(title.originalLanguage ? [title.originalLanguage] : []), 'original-language'));
   const reported=[...new Set(offers.flatMap(offer=>descriptionReport(offer)?.languages || []))];
   if (liveCatalog && reported.length) body.append(element('p','Audio description reported: '+formatLanguages(reported),'ad-report'));
@@ -237,24 +233,8 @@ function cardFor(title) {
   }
   const options = element('details', undefined, 'watch-options');
   const summary=element('summary','Where to watch');summary.append(element('span',' '+title.title,'sr-only'));options.append(summary);
-  if (liveCatalog) {
-    options.append(element('p', metadataExplanation(title), 'verification-note'));
-    if (title.originalLanguage) options.append(element('p', `Original-language source: ${title.originalLanguageSource || 'Source unverified'}`, 'verification-note'));
-    options.append(element('p', `Availability checked ${checkedDate(title.lastCheckedAt)} (IST). This is the last title check, not the latest catalogue run.`, 'verification-note'));
-    if (view === 'weekly') options.append(element('p', 'Added dates are provider-reported availability, not confirmed OTT premiere dates. Series additions do not confirm a new season or episode.', 'verification-note'));
-  }
-  if(title.tmdb) {
-    const metadata=element('div',`Genres: ${title.tmdb.genres.join(' · ') || 'Unverified'}`, 'audio');
-    const credit=element('a','Metadata source: TMDB ↗','provider');
-    credit.href='https://www.themoviedb.org/'+title.tmdb.mediaType+'/'+title.tmdb.id;credit.target='_blank';credit.rel='noopener noreferrer';
-    credit.setAttribute('aria-label',`Metadata for ${title.title} on TMDB (opens in a new tab)`);
-    options.append(metadata,credit);
-  }
-  offers.forEach(offer => {
-    const item = offerBody(offer,true,title.title);
-    if (liveCatalog && view === 'weekly') item.append(element('div', `Reported added ${checkedDate(weeklyOfferDate(title, offer))}${Number.isFinite(offer.availableSince) && offer.availableSince > 0 ? '' : ' · Offer date unverified; platform addition shown'}`, 'audio'));
-    options.append(item);
-  });
+  offers.forEach(offer => options.append(offerBody(offer,false,title.title)));
+  if (liveCatalog) { const details=element('a','Full title details','provider');details.href='/titles/'+encodeURIComponent(title.id.replace(/^motn:/,''))+'/';options.append(details); }
   const report = element('button','Report incorrect details','report-button');
   report.type='button';report.setAttribute('aria-label','Report incorrect details for '+title.title); report.onclick=()=>openReport(title); options.append(report);
   body.append(options);

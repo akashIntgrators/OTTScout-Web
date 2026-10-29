@@ -30,3 +30,5 @@ button[aria-controls="analytics-choice-panel"]{background:#203b36;color:#eef5f6;
 .ad-slot{background:#172029}.badge{background:#10202a;color:#f0f7fa}.save{background:#102b24;color:#e5fff4;border:1px solid #bfe8d8}.card-title a{text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
 
 .seo-navigation{max-width:1000px;margin:24px auto;padding:0 28px}
+
+.rental-label{display:inline-block;font-size:11px;line-height:1.5;padding:2px 7px;border:1px solid #e4c98b;border-radius:4px;color:#ffe0a2;background:#30291b;vertical-align:middle;white-space:nowrap}.watch-options .offer{padding:12px 0}.watch-options>.provider{display:inline-block;margin:12px 0}
