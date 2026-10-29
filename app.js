@@ -506,16 +506,11 @@ async function loadCatalog() {
     }
     liveCatalog=data;titles=data.titles;
     renderGenres();renderOriginals();
-    const enrichment=data.tmdbEnrichment;
-    $('#metadata-status').textContent=enrichment ? `Original language available for ${titles.filter(t=>t.originalLanguage).length.toLocaleString('en-IN')} of ${titles.length.toLocaleString('en-IN')} titles · TMDB matched: ${Number(enrichment.matched||0).toLocaleString('en-IN')} · Awaiting lookup: ${Number(enrichment.pending||0).toLocaleString('en-IN')} · No confident match: ${Number(enrichment.unmatched||0).toLocaleString('en-IN')}${enrichment.status==='error'?' · Metadata update delayed':''}. Missing details stay Unverified.` : 'Language and genre details are still being verified. Unmatched details remain Unverified.';
-    const stale=Date.now()-Date.parse(data.updatedAt)>12*60*60*1000;
-    $('#catalog-status').textContent=`${data.syncStatus==='limited'?'Request cap reached · ':stale?'Updates delayed · ':''}India catalog · Last complete streaming update ${new Date(data.updatedAt).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZone:'Asia/Kolkata'})} IST · ${data.coverage?.length || 0} platforms covered`;
-    $('#coverage-note').textContent=data.missingPlatforms.length?`Coverage note: ${data.missingPlatforms.join(' and ')} are not available from our current data provider. Search covers our imported catalog.`:'Availability is reported by our data provider. Search covers our imported catalog.';
-    if(data.catalogBackfill && !data.catalogBackfill.complete) $('#coverage-note').textContent += ' Older titles are being added gradually.';
+    $('#catalog-status').hidden=true;
     renderOptions('platforms');updateSelections();render();
   } catch {
     $('#catalog-status').textContent='Sample preview · Live catalog unavailable. Titles and streaming details below are illustrative.';
-    $('#coverage-note').textContent='Sample data is shown until the live catalog is available.';
+    $('#catalog-status').hidden=false;
   } finally {
     document.dispatchEvent(new Event('ottscout:ready'));
   }
