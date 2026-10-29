@@ -73,3 +73,22 @@ subscriptionOnly=false;if(matchingOffers(offerFixture).length!==1)throw Error('N
 view='discover';if(matchingOffers(offerFixture).length!==2)throw Error('Older discover offers lost');
 `,context);
 console.log('Weekly offer dates, media classification and metadata explanations passed.');
+vm.runInContext(`
+view='discover';liveCatalog={};subscriptionOnly=false;originalOnly=false;selectedOriginals=null;selectedLanguages.clear();selectedLanguages.add('Hindi');audioDescriptionOnly=true;
+const reportNow=Date.now()/1000;
+const described={platform:'Netflix',link:'https://www.netflix.com/title/123',type:'subscription',audio:['English'],audioDescription:{status:'reported',languages:['Hindi'],sourceURL:'https://www.netflix.com/in/title/123',checkedAt:reportNow-100,expiresAt:reportNow+DAY,indiaPlaybackVerified:false}};
+if(matchingOffers({originalLanguage:'English',offers:[described]}).length!==1)throw Error('Description language incorrectly inferred from ordinary audio');
+selectedLanguages.clear();selectedLanguages.add('Tamil');
+if(matchingOffers({originalLanguage:'English',offers:[described]}).length)throw Error('Hindi description passed a Tamil description filter');
+selectedLanguages.clear();selectedLanguages.add('Hindi');originalOnly=true;
+if(matchingOffers({originalLanguage:'English',offers:[described]}).length)throw Error('Dub description treated as original audio');
+originalOnly=false;
+if(descriptionReport({...described,platform:'Prime Video'}))throw Error('Provider description leaked across platforms');
+if(descriptionReport({...described,link:'https://netflix.com/title/124'}))throw Error('Description attached to wrong provider ID');
+if(descriptionReport({...described,audioDescription:{...described.audioDescription,checkedAt:reportNow-31*DAY,expiresAt:reportNow-1}}))throw Error('Expired report promoted');
+if(descriptionReport({...described,audioDescription:{...described.audioDescription,indiaPlaybackVerified:true}}))throw Error('Unverified playback promoted to verified');
+if(descriptionReport({platform:'Netflix',audio:['Hindi']}))throw Error('Ordinary audio used to infer description');
+audioDescriptionOnly=false;
+if(matchingOffers({offers:[described]}).length)throw Error('Normal Hindi audio filter used a Hindi description as ordinary Hindi audio');
+`,context);
+console.log('Description language, source identity, expiry and unknown-state scenarios passed.');
