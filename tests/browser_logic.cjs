@@ -100,3 +100,10 @@ if(rentalLabel([{type:'rent'},{type:'buy'}])!=='Rent option')throw Error('Buy op
 if(rentalLabel([{type:'subscription'}])!=='')throw Error('Nonrental labelled');
 `,context);
 console.log('Rental-only and mixed viewing options labelled accurately.');
+
+vm.runInContext(`
+liveCatalog={missingPlatforms:['Sun NXT','aha']};titles=[{offers:[{platform:'Netflix'},{platform:'Prime Video'}]}];
+if(availablePlatforms().join('|')!=='Netflix|Prime Video')throw Error('Inactive platforms selectable');
+liveCatalog=null;
+if(availablePlatforms().length!==platforms.length)throw Error('Sample choices missing');
+`,context);
