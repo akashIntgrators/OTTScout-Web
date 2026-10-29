@@ -101,3 +101,14 @@ A manual **metadata_only** workflow run exports the previously validated streami
 Catalogue backfill rotates across each supported platform and movies/series, fetching at most one page per task per run. This avoids finishing a large platform before importing from another. Existing per-task cursors are retained, including those from the previous sequential importer. A saved next-task pointer resumes the rotation after request limits or interruptions. Completed tasks are skipped.
 
 Scheduled runs use two backfill pages by default. Manual runs can select six under `catalog_pages`, still subject to the unchanged per-run and calendar-month streaming API limits. Routine availability checks and language enrichment run first. A backfilled older title does not become a weekly release unless the provider independently reports a recent addition. Older titles appear in Discover and search. Catalogue coverage remains partial until every platform/type task finishes.
+
+
+## Weekly accuracy and bounded catch-up
+
+Weekly exports include per-platform `weeklyEvents` timestamps. The dashboard and crawlable weekly page also check an offer's `availableSince`: a newly reported free/rental option cannot make an older base-subscription offer appear new. Missing offer dates fall back to a labelled platform-addition date. Older movies are films released before the current IST year; series are never labelled new seasons from their first-air year. No provider detection date is presented as a verified OTT premiere.
+
+Cards show their individual availability check date, while the banner retains the last complete streaming watermark. Metadata explanations distinguish pending lookups, no confident match, missing source fields, and known provider originals. Missing TMDB original languages preserve known provider values. Exact matching remains conservative; ambiguous searches remain unverified.
+
+Large change queries persist validated pages and a fixed from/to window in private SQLite state. On a later run they resume at the saved cursor under the same request caps. A change feed is applied only after its final validated page, and its watermark advances to that window's end, not the resume time. Earlier page check timestamps remain intact. The report exposes `pendingChangeQueries` for diagnosis; raw staged pages are never published.
+
+The scheduled collector uses `--allow-cached-on-limit`: if a request cap is reached and a previously validated snapshot exists, metadata and website updates may continue from that cache. `syncStatus` stays limited, the public banner reports the cap, and streaming freshness is not advanced. An incomplete initial baseline, malformed response, or provider error cannot take this fallback path. Explicit metadata-only publication also works when the most recent streaming run was limited. Streaming caps remain 12 requests/run and 400/calendar month; TMDB keeps its separate 300/run cap.
