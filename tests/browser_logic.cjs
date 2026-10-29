@@ -53,3 +53,23 @@ if(!text.includes('motn:42')||!text.includes('Original language')||!text.include
 if(text.includes('TMDB_READ_ACCESS_TOKEN')||text.includes('localStorage'))throw Error('Report contains implementation or private storage');
 `,context);
 console.log('Original language, viewing audio, subscription, genre and report scenarios passed.');
+vm.runInContext(`
+const timestamp=1793275200;
+const weeklyFixture={type:'Movie',year:2006,weeklyPlatforms:['Netflix','Prime Video'],weeklyUpdatedAt:timestamp-10,weeklyEvents:[{platform:'Netflix',addedAt:timestamp-10},{platform:'Prime Video',addedAt:timestamp-8*DAY}]};
+if(weeklyOfferDate(weeklyFixture,{platform:'Netflix',availableSince:timestamp-8*DAY},timestamp)!==null)throw Error('Old offer made new by another offer');
+if(weeklyOfferDate(weeklyFixture,{platform:'Netflix',availableSince:timestamp-100},timestamp)!==timestamp-100)throw Error('New offer excluded');
+if(weeklyOfferDate(weeklyFixture,{platform:'Prime Video',availableSince:timestamp-100},timestamp)!==null)throw Error('Expired platform event included');
+if(weeklyOfferDate(weeklyFixture,{platform:'Netflix',availableSince:timestamp+100},timestamp)!==null)throw Error('Future offer included');
+if(weeklyOfferDate(weeklyFixture,{platform:'Netflix'},timestamp)!==timestamp-10)throw Error('Unknown offer date fallback missing');
+if(!olderMovie(weeklyFixture,timestamp*1000)||olderMovie({...weeklyFixture,type:'Series'},timestamp*1000))throw Error('Series treated as older film');
+if(olderMovie({...weeklyFixture,year:2026},timestamp*1000)||olderMovie({...weeklyFixture,year:null},timestamp*1000))throw Error('Unknown/current year mislabelled');
+if(!metadataExplanation({tmdbMatchStatus:'unmatched'}).includes('No confident TMDB match'))throw Error('Unmatched reason missing');
+if(!metadataExplanation({tmdbMatchStatus:'pending'}).includes('pending'))throw Error('Pending reason missing');
+view='weekly';liveCatalog={};selectedOriginals=null;subscriptionOnly=true;
+const timeNow=Date.now()/1000;
+const offerFixture={...weeklyFixture,weeklyEvents:[{platform:'Netflix',addedAt:timeNow-10}],offers:[{platform:'Netflix',audio:['Hindi'],type:'subscription',availableSince:timeNow-8*DAY},{platform:'Netflix',audio:['Hindi'],type:'free',availableSince:timeNow-10}]};
+if(matchingOffers(offerFixture).length)throw Error('Old subscription included in weekly subscription-only feed');
+subscriptionOnly=false;if(matchingOffers(offerFixture).length!==1)throw Error('New free offer missing');
+view='discover';if(matchingOffers(offerFixture).length!==2)throw Error('Older discover offers lost');
+`,context);
+console.log('Weekly offer dates, media classification and metadata explanations passed.');

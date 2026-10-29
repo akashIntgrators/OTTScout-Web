@@ -75,3 +75,38 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual(result['matched'],1)
             self.assertEqual(catalog['titles'][0]['tmdbMatchStatus'],'pending')
             db.close()
+
+    def test_missing_tmdb_original_preserves_provider_value(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=tmdb.open_cache(Path(folder)/'cache.sqlite')
+            title={**TITLE,'tmdbId':77}
+            tmdb.enrich({'titles':[title]},db,Fake({'/movie/77':{**DETAILS,'original_language':None}}),1000)
+            self.assertEqual(title['originalLanguage'],'Hindi')
+            self.assertEqual(title['originalLanguageSource'],'Streaming Availability API')
+            self.assertEqual(title['tmdb']['genres'],['Drama'])
+            db.close()
+
+    def test_changed_identity_clears_old_match_and_restores_provider_original(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=tmdb.open_cache(Path(folder)/'cache.sqlite')
+            title={**TITLE,'tmdbId':77};catalog={'titles':[title]}
+            tmdb.enrich(catalog,db,Fake({'/movie/77':DETAILS}),1000)
+            title['tmdbId']=78
+            tmdb.enrich(catalog,db,None,1001)
+            self.assertNotIn('tmdb',title)
+            self.assertEqual(title['originalLanguage'],'Hindi')
+            self.assertEqual(title['originalLanguageSource'],'Streaming Availability API')
+            self.assertEqual(title['tmdbMatchStatus'],'pending')
+            db.close()
+
+    def test_recent_addition_precedes_background_external_id(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=tmdb.open_cache(Path(folder)/'cache.sqlite')
+            weekly={**TITLE,'id':'motn:9','weekly':True,'weeklyUpdatedAt':1000}
+            background={**TITLE,'id':'motn:1','tmdbId':78}
+            client=Fake({'/search/movie':{'results':[{'id':77,'title':'Test Film','release_date':'2025-01-01'}]},'/movie/77':DETAILS},limit=2)
+            tmdb.enrich({'titles':[background,weekly]},db,client,1001)
+            self.assertEqual(weekly['tmdbMatchStatus'],'matched')
+            self.assertEqual(background['tmdbMatchStatus'],'pending')
+            self.assertEqual(client.calls,2)
+            db.close()

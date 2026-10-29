@@ -245,7 +245,7 @@ class CatalogTests(unittest.TestCase):
                 if endpoint == '/changes' and params['change_type'] == 'new':
                     return {'shows': {'movie': show('movie')}, 'changes': [
                         {'showId': 'movie', 'service': {'id': 'netflix'}, 'timestamp': NOW + 100,
-                         'link': 'https://example.com/watch'}], 'hasMore': False}
+                         'link': 'https://example.com/watch'}] if params['from'] <= NOW+100 <= params['to'] else [], 'hasMore': False}
                 return super().get(endpoint, params)
         sync.sync(self.db, NewPlatform(), NOW + 21600)
         sync.sync(self.db, NewPlatform(), NOW + 22000)
@@ -254,6 +254,7 @@ class CatalogTests(unittest.TestCase):
         title = next(t for t in json.loads(output.read_text())['titles'] if t['id'] == 'motn:movie')
         self.assertTrue(title['weekly'])
         self.assertEqual(title['weeklyPlatforms'], ['Netflix'])
+        self.assertEqual(title['weeklyEvents'], [{'platform':'Netflix','addedAt':NOW+100}])
         self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0], 1)
 
     def test_cached_export_does_not_call_streaming_provider(self):
@@ -296,6 +297,81 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(sync.get_meta(self.db,'catalog_backfill_v1:netflix:movie')['pages'],22)
         self.assertIsNone(sync.get_meta(self.db,'catalog_backfill_next'))
         self.assertIsNone(self.db.execute("SELECT id FROM titles WHERE id='motn:bad'").fetchone())
+
+    def test_changes_resume_after_budget_without_repeating_pages_or_premature_upserts(self):
+        sync.set_meta(self.db,'baseline_complete',NOW-100)
+        class First:
+            calls=0
+            def get(inner, endpoint, params):
+                inner.calls+=1
+                if inner.calls>1:raise sync.BudgetReached('run cap')
+                return {'shows':{'one':show('one')},'changes':[{'showId':'one','service':{'id':'netflix'},'timestamp':NOW-10}], 'hasMore':True,'nextCursor':'second'}
+        with self.assertRaises(sync.BudgetReached):
+            sync.sync_change_feed(self.db,First(),{'Netflix':'netflix'},'new',NOW-100,NOW)
+        self.db.rollback()
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+        self.assertIsNone(sync.get_meta(self.db,'watermark:new'))
+        self.db.close();self.db=sync.open_db(self.root/'state.sqlite')
+        class Second:
+            calls=0
+            def get(inner, endpoint, params):
+                inner.calls+=1
+                self.assertEqual(params['cursor'],'second')
+                self.assertEqual(params['to'],NOW)
+                return {'shows':{'two':show('two')},'changes':[{'showId':'two','service':{'id':'netflix'},'timestamp':NOW-5}], 'hasMore':False}
+        later=Second()
+        self.assertEqual(sync.sync_change_feed(self.db,later,{'Netflix':'netflix'},'new',NOW-100,NOW+21600),2)
+        self.assertEqual(later.calls,1)
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
+        self.assertIsNone(sync.get_meta(self.db,'change_window_v2:new'))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM change_pages').fetchone()[0],0)
+        self.assertEqual(self.db.execute('SELECT last_checked FROM titles WHERE id=?',('motn:one',)).fetchone()[0],NOW)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0],2)
+
+    def test_changes_repeated_cursor_retains_staging_and_watermark(self):
+        class Repeated:
+            def get(inner, endpoint, params):
+                return {'shows':{},'changes':[], 'hasMore':True,'nextCursor':'same'}
+        with self.assertRaises(sync.SyncError):
+            sync.sync_change_feed(self.db,Repeated(),{'Netflix':'netflix'},'updated',NOW-100,NOW)
+        self.db.rollback()
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:updated')['pages'],1)
+        self.assertIsNone(sync.get_meta(self.db,'watermark:updated'))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM change_pages').fetchone()[0],1)
+
+    def test_invalid_change_date_never_advances_cursor_or_applies_title(self):
+        class Future:
+            def get(inner, endpoint, params):
+                return {'shows':{'one':show('one')},'changes':[{'showId':'one','timestamp':NOW+1}], 'hasMore':False}
+        with self.assertRaises(sync.SyncError):
+            sync.sync_change_feed(self.db,Future(),{'Netflix':'netflix'},'new',NOW-100,NOW)
+        self.db.rollback()
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new')['pages'],0)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM change_pages').fetchone()[0],0)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+
+    def test_limited_run_can_refresh_site_without_faking_streaming_freshness(self):
+        sync.set_meta(self.db,'pilot_started',NOW-1000)
+        sync.set_meta(self.db,'last_success',NOW-100)
+        sync.save_show(self.db,show(),{'Netflix':'netflix'},NOW-100)
+        self.db.commit()
+        output=self.root/'catalog.json';report=self.root/'report.json'
+        args=['catalog_sync.py','--db',str(self.root/'state.sqlite'),'--export',str(output),'--report',str(report),'--allow-cached-on-limit']
+        with patch.object(sys,'argv',args), patch.dict(os.environ,{'STREAMING_API_KEY':'test-only'}), patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'sync',side_effect=sync.BudgetReached('run cap')):
+            self.assertEqual(sync.main(),0)
+        exported=json.loads(output.read_text())
+        self.assertEqual(exported['updatedAt'],sync.stamp(NOW-100))
+        self.assertEqual(exported['syncStatus'],'limited')
+        self.assertEqual(exported['titles'][0]['lastCheckedAt'],NOW-100)
+        self.assertEqual(json.loads(report.read_text())['runs'][-1]['status'],'limited')
+
+    def test_limited_initial_run_never_publishes_an_unvalidated_baseline(self):
+        sync.set_meta(self.db,'pilot_started',NOW-1000);self.db.commit()
+        output=self.root/'catalog.json';report=self.root/'report.json'
+        args=['catalog_sync.py','--db',str(self.root/'state.sqlite'),'--export',str(output),'--report',str(report),'--allow-cached-on-limit']
+        with patch.object(sys,'argv',args), patch.dict(os.environ,{'STREAMING_API_KEY':'test-only'}), patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'sync',side_effect=sync.BudgetReached('run cap')):
+            self.assertEqual(sync.main(),1)
+        self.assertFalse(output.exists())
 
 if __name__ == '__main__':
     unittest.main()

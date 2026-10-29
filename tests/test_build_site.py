@@ -36,3 +36,38 @@ class DiscoveryBuildTests(unittest.TestCase):
                 path = node.text[len(module.BASE):].strip('/')
                 self.assertTrue((site/path/'index.html').exists())
             self.assertIn('https://ottscout.techiwithhelmet.com/sitemap.xml', (site/'robots.txt').read_text())
+
+    def test_weekly_offer_dates_and_older_movies(self):
+        now=1793275200
+        title={'type':'Movie','year':2006,'weeklyPlatforms':['Netflix','Prime Video'],
+               'weeklyUpdatedAt':now-10,'weeklyEvents':[{'platform':'Netflix','addedAt':now-10},{'platform':'Prime Video','addedAt':now-8*86400}]}
+        self.assertTrue(module.older_movie(title,now))
+        self.assertFalse(module.older_movie({**title,'type':'Series'},now))
+        self.assertIsNone(module.weekly_offer_date(title,{'platform':'Netflix','availableSince':now-8*86400},now))
+        self.assertEqual(module.weekly_offer_date(title,{'platform':'Netflix','availableSince':now-100},now),now-100)
+        self.assertIsNone(module.weekly_offer_date(title,{'platform':'Prime Video','availableSince':now-100},now))
+        self.assertIsNone(module.weekly_offer_date(title,{'platform':'Netflix','availableSince':now+100},now))
+        self.assertEqual(module.weekly_offer_date(title,{'platform':'Netflix'},now),now-10)
+        self.assertEqual(module.original_label('ko'),'Korean')
+
+    def test_weekly_page_excludes_old_offer_and_explains_verification(self):
+        now=1793275200
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            for name in ('index.html','app.js','style.css','CNAME'):(root/name).write_text('')
+            (root/'data').mkdir()
+            title={'id':'motn:99','title':'Older movie','type':'Movie','year':2006,'weekly':True,'weeklyUpdatedAt':now-10,'weeklyPlatforms':['Netflix','Prime Video'],
+                   'lastCheckedAt':now-100,'tmdbMatchStatus':'unmatched','offers':[
+                   {'platform':'Netflix','type':'subscription','audio':['Hindi'],'subtitles':[],'availableSince':now-9*86400},
+                   {'platform':'Prime Video','type':'free','audio':['Hindi'],'subtitles':[],'availableSince':now-10}]}
+            (root/'data/catalog.json').write_text(json.dumps({'updatedAt':'2026-10-29','titles':[title]}))
+            site=module.build(root,now)
+            weekly=(site/'this-week/index.html').read_text()
+            self.assertIn('Older movies added',weekly)
+            self.assertIn('Prime Video',weekly)
+            self.assertNotIn('Netflix',weekly)
+            self.assertIn('Premiere unverified',weekly)
+            detail=(site/'titles/99/index.html').read_text()
+            self.assertIn('No confident TMDB match',detail)
+            self.assertIn('Availability checked',detail)
+            self.assertIn('Netflix',detail) # Discover/details preserve older offers.
