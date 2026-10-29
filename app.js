@@ -195,7 +195,7 @@ function cardFor(title) {
   }
   if(title.tmdb) {
     const metadata=element('div',`Genres: ${title.tmdb.genres.join(' · ') || 'Unverified'}`, 'audio');
-    const credit=element('a','Original language & genres: TMDB ↗','provider');
+    const credit=element('a','Metadata source: TMDB ↗','provider');
     credit.href='https://www.themoviedb.org/'+title.tmdb.mediaType+'/'+title.tmdb.id;credit.target='_blank';credit.rel='noopener noreferrer';
     options.append(metadata,credit);
   }
