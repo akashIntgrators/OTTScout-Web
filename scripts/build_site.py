@@ -79,7 +79,7 @@ def build(root=ROOT, now=None):
 <meta property="og:description" content="{escape(description,quote=True)}"><meta property="og:url" content="{canonical}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="OTTScout"><meta name="twitter:card" content="summary">
 <link rel="icon" href="/assets/ottscout-icon.svg?v=1" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=1" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OTTScout">
-{structured}<link rel="stylesheet" href="/style.css?v=search13"></head><body>
+{structured}<link rel="stylesheet" href="/style.css?v=reliable14"></head><body>
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="site-header"><a class="brand" href="/" aria-label="OTTScout home">OTT<span>Scout</span></a><span class="region">Streaming in India</span></header>
 <nav class="seo-nav seo-navigation" aria-label="Browse streaming">{navigation}</nav><main id="main" class="seo-page" tabindex="-1">
@@ -104,7 +104,7 @@ def build(root=ROOT, now=None):
         updated = escape(catalog.get('updatedAt', 'Unknown'))
         note = f'<p class="seo-note">Snapshot updated: {updated}. Imported catalogue coverage is limited; this is not an exhaustive list. Provider-reported additions are not confirmed OTT premiere dates.</p>'
         def offers_for(title, language=None, weekly=False):
-            return [o for o in title['offers'] if any(l in LANGUAGES for l in o['audio']) and (not language or language in o['audio']) and (not weekly or weekly_offer_date(title, o, now) is not None)]
+            return [o for o in title['offers'] if (not o['audio'] or any(l in LANGUAGES for l in o['audio'])) and (not language or language in o['audio']) and (not weekly or weekly_offer_date(title, o, now) is not None)]
         def cards(items, language=None, weekly=False):
             result = []
             for t in items:
@@ -114,7 +114,7 @@ def build(root=ROOT, now=None):
                 audio = [l for l in LANGUAGES if any(l in o['audio'] for o in offers)]
                 providers = ', '.join(dict.fromkeys(o['platform'] for o in offers))
                 addition = f' · Added {checked_date(max(weekly_offer_date(t, o, now) for o in offers), now)} · Premiere unverified' if weekly else ''
-                result.append(f'<li><a href="{title_path(t)}">{escape(t["title"])}</a> <span>· {escape(" · ".join(audio))}</span><small>{escape(t["type"])} · {escape(providers)}{escape(addition)}</small></li>')
+                result.append(f'<li><a href="{title_path(t)}">{escape(t["title"])}</a> <span>· {escape(" · ".join(audio) or "Audio languages unverified")}</span><small>{escape(t["type"])} · {escape(providers)}{escape(addition)}</small></li>')
             return '<ul class="seo-list">' + ''.join(result) + '</ul>' if result else '<p>No matching titles in this snapshot. <a href="/">Explore the dashboard</a>.</p>'
         picks = [
             ('motn:25736', 'For a revenge-action night', 'Yevadu builds its action story around a changed identity and the consequences that follow. Choose it when you want a high-concept revenge plot rather than a quiet character drama.'),

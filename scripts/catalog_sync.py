@@ -442,9 +442,12 @@ def report(db, now):
     begin = get_meta(db, 'pilot_started', now)
     month_start = int(datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     coverage = get_meta(db, 'coverage', {})
-    catalog = {'totalTitles': 0, 'titlesWithTargetAudio': 0, 'types': {}, 'platforms': {}}
-    for raw, in db.execute('SELECT body FROM titles'):
+    catalog = {'totalTitles': 0, 'titlesWithTargetAudio': 0, 'titlesWithUnknownAudio':0, 'titlesWithoutOffers':0, 'titlesNotCheckedFor7Days':0, 'types': {}, 'platforms': {}}
+    for raw, checked in db.execute('SELECT body,last_checked FROM titles'):
         title = json.loads(raw)
+        catalog['titlesWithUnknownAudio'] += int(any(not o['audio'] for o in title['offers']))
+        catalog['titlesWithoutOffers'] += int(not title['offers'])
+        catalog['titlesNotCheckedFor7Days'] += int(now-checked>7*DAY)
         catalog['totalTitles'] += 1
         catalog['types'][title['type']] = catalog['types'].get(title['type'], 0) + 1
         if any(language in LANGUAGES.values() for offer in title['offers'] for language in offer['audio']):
@@ -456,7 +459,8 @@ def report(db, now):
             stats['unknownAudioOffers'] += int(not offer['audio'])
             for language in offer['audio']:
                 stats['audioLanguages'][language] = stats['audioLanguages'].get(language, 0) + 1
-    return {'generatedAt': stamp(now), 'catalog': catalog, 'pilotStartedAt': stamp(begin),
+    rechecks=[json.loads(r[0]) for r in db.execute("SELECT value FROM meta WHERE key LIKE 'title_recheck:%'")]
+    return {'generatedAt': stamp(now), 'catalog': catalog, 'titleRechecks':rechecks, 'pilotStartedAt': stamp(begin),
             'pilotEndsAt': stamp(begin + 30 * DAY), 'scheduleHours': 6,
             'requestsThisMonth': db.execute('SELECT count(*) FROM requests WHERE at>=?', (month_start,)).fetchone()[0],
             'requestsDuringPilot': db.execute('SELECT count(*) FROM requests WHERE at>=?', (begin,)).fetchone()[0],
@@ -499,11 +503,18 @@ def export_catalog(db, path, now):
                 print('Reported title export: '+json.dumps({'title':title['title'],'offers':[{'platform':o['platform'],'audio':o['audio'],'availableSince':o.get('availableSince')} for o in title['offers']]}))
         if title['id'] in ORIGINAL_LANGUAGE_CORRECTIONS:
             title['originalLanguage'] = ORIGINAL_LANGUAGE_CORRECTIONS[title['id']]
-        # Exclude unknown or non-target audio rather than infer dubbing from original language.
-        if not any(language in LANGUAGES.values() for offer in title['offers'] for language in offer['audio']):
+        # Missing audio is incomplete metadata, not proof that an India offer is unavailable.
+        # Known non-target audio stays out of this six-language catalogue.
+        if not title['offers'] or not any(not offer['audio'] or any(language in LANGUAGES.values() for language in offer['audio']) for offer in title['offers']):
             continue
         title['firstObservedAt'] = first_seen
         title['lastCheckedAt'] = last_checked
+        for offer in title['offers']:
+            offer['availabilitySource']='Streaming Availability API by Movie of the Night'
+            offer['availabilityCheckedAt']=last_checked
+            offer.setdefault('audioSource','Streaming Availability API by Movie of the Night')
+            offer.setdefault('audioCheckedAt',last_checked)
+            offer['audioStatus']='reported' if offer['audio'] else 'unverified'
         # Only provider-reported new events qualify, including explicitly fetched history.
         recent = db.execute("SELECT platform,MAX(at) FROM events WHERE title_id=? AND kind='new' AND at>=? AND at<=? GROUP BY platform", (title['id'], now - 7 * DAY, now)).fetchall()
         title['weeklyPlatforms'] = [row[0] for row in recent]
@@ -541,7 +552,14 @@ def recheck_reported_titles(db, client, now, records=None):
         key='title_recheck:netflix:'+ident
         state=get_meta(db,key,{})
         if state.get('resolved') or now-state.get('checkedAt',0)<DAY: continue
-        results=client.get('/shows/search/title',{'title':row['title'],'country':'in','show_type':'movie','series_granularity':'show'})
+        try:
+            results=client.get('/shows/search/title',{'title':row['title'],'country':'in','show_type':'movie','series_granularity':'show'})
+        except BudgetReached:
+            raise
+        except SyncError:
+            set_meta(db,key,{'checkedAt':now,'resolved':False,'title':row['title'],'status':'lookup_failed'})
+            db.commit()
+            return 0
         if not isinstance(results,list): raise SyncError('Invalid title search response')
         matches=[]
         for show in results:

@@ -24,12 +24,19 @@ else:
 if path.exists() and 'catalog' in report:
     catalog = report['catalog']
     lines += ['', '### Imported sample coverage', '',
-              f"{catalog['totalTitles']} unique titles stored; {catalog['titlesWithTargetAudio']} have verified target audio and can appear in the dashboard.", '',
+              f"{catalog['totalTitles']} unique titles stored; {catalog['titlesWithTargetAudio']} have reported target audio; valid offers with missing audio remain visible without a specific language filter.", '',
               '| Platform | Offers | Offers with target audio | Audio unverified |',
               '| --- | ---: | ---: | ---: |']
     for name, stats in catalog['platforms'].items():
         lines.append(f"| {name} | {stats['offers']} | {stats['offersWithTargetAudio']} | {stats['unknownAudioOffers']} |")
     lines += ['', 'Counts describe the imported sample, not complete platform coverage.']
+if path.exists() and 'catalog' in report:
+    lines += ['', '### Data quality', '',
+              f"- Titles with unverified offer audio: {report['catalog'].get('titlesWithUnknownAudio',0)}",
+              f"- Titles without current offers: {report['catalog'].get('titlesWithoutOffers',0)}",
+              f"- Titles not checked for over seven days: {report['catalog'].get('titlesNotCheckedFor7Days',0)}"]
+    for item in report.get('titleRechecks',[]):
+        lines.append(f"- Reported title recheck: {item.get('title','Unknown')} — {'resolved' if item.get('resolved') else item.get('status','pending provider match')}")
 if path.exists() and report.get('catalogBackfill', {}).get('platforms'):
     lines += ['', '### Older catalogue import progress', '', '| Platform | Movie pages | Series pages |', '| --- | ---: | ---: |']
     for name, pages in report['catalogBackfill']['platforms'].items():
