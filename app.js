@@ -129,12 +129,17 @@ function originalBucket(title) {
 function matchingOriginal(title) {
   return selectedOriginals===null || selectedOriginals.has(originalBucket(title));
 }
+function matchesViewingAudio(offer,title) {
+  if(audioDescriptionOnly) return descriptionLanguages(offer,title).length>0;
+  if(!offer.audio.length) return !originalOnly && languages.every(l=>selectedLanguages.has(l));
+  return offer.audio.some(language=>selectedLanguages.has(language) && (!originalOnly || language===title.originalLanguage));
+}
 function matchingOffers(title, weeklyOnly = view === 'weekly') {
   const offers = title.offers || [{platform:title.platform, audio:title.audio, subtitles:[], type:'sample'}];
   const priority = {subscription:0, free:1, addon:2, rent:3, buy:4, sample:5};
   return offers.filter(offer => matchingOriginal(title) && selectedPlatforms.has(offer.platform)
     && (!subscriptionOnly || (offer.type==='subscription' && !offer.addon))
-    && (audioDescriptionOnly ? descriptionLanguages(offer,title).length>0 : offer.audio.some(language => selectedLanguages.has(language) && (!originalOnly || language === title.originalLanguage)))
+    && matchesViewingAudio(offer,title)
     && (!weeklyOnly || !liveCatalog || weeklyOfferDate(title, offer) !== null))
     .sort((a,b) => (priority[a.type] ?? 6) - (priority[b.type] ?? 6) || a.platform.localeCompare(b.platform));
 }
@@ -214,7 +219,8 @@ function cardFor(title) {
   heading.id=titleDomId(title.id);
   const name = element(liveCatalog ? 'a' : 'span', title.title);
   if (liveCatalog) name.href = '/titles/' + encodeURIComponent(title.id.replace(/^motn:/, '')) + '/';
-  heading.append(name, document.createTextNode(' '), element('span', (audioDescriptionOnly?'· Description audio: ':'· Audio: ') + formatLanguages(audio), 'card-languages'));
+  const audioLabel=!audio.length?'· Audio languages unverified':(audioDescriptionOnly?'· Description audio: ':'· Audio: ')+formatLanguages(audio);
+  heading.append(name, document.createTextNode(' '), element('span', audioLabel, 'card-languages'));
   const rental=rentalLabel(offers);
   if (rental) heading.append(document.createTextNode(' '),element('span',rental,'rental-label'));
   body.append(heading, element('div', 'Original language: ' + formatLanguages(title.originalLanguage ? [title.originalLanguage] : []), 'original-language'));
