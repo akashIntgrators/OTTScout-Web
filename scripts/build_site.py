@@ -55,6 +55,8 @@ def build(root=ROOT, now=None):
         shutil.copy2(root / name, target / name)
     if (root / 'analytics.js').exists():
         shutil.copy2(root / 'analytics.js', target / 'analytics.js')
+    if (root / 'favicon.ico').exists():
+        shutil.copy2(root / 'favicon.ico', target / 'favicon.ico')
     for name in ('assets', 'data'):
         if (root / name).exists():
             shutil.copytree(root / name, target / name)
@@ -77,16 +79,18 @@ def build(root=ROOT, now=None):
 <title>{escape(title)} | OTTScout</title><meta name="description" content="{escape(description,quote=True)}">
 <link rel="canonical" href="{canonical}"><meta property="og:title" content="{escape(title,quote=True)}">
 <meta property="og:description" content="{escape(description,quote=True)}"><meta property="og:url" content="{canonical}">
-<meta property="og:type" content="website"><meta property="og:site_name" content="OTTScout"><meta name="twitter:card" content="summary">
-<link rel="icon" href="/assets/ottscout-icon.svg?v=1" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=1" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=1"><meta name="apple-mobile-web-app-title" content="OTTScout">
-{structured}<link rel="stylesheet" href="/style.css?v=suggest15"></head><body>
+<meta property="og:type" content="website"><meta property="og:site_name" content="OTTScout">
+<meta property="og:image" content="{BASE}/assets/ottscout-social.png?v=brand14"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="OTTScout — Find it. Save it. Watch it.">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="{BASE}/assets/ottscout-social.png?v=brand14"><meta name="twitter:image:alt" content="OTTScout — Find it. Save it. Watch it.">
+<link rel="icon" href="/favicon.ico?v=brand14" type="image/x-icon"><link rel="icon" href="/assets/ottscout-icon.svg?v=brand14" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=brand14" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=brand14"><meta name="apple-mobile-web-app-title" content="OTTScout">
+{structured}<link rel="stylesheet" href="/style.css?v=brand14"></head><body>
 <a class="skip-link" href="#main">Skip to main content</a>
-<header class="site-header"><a class="brand" href="/" aria-label="OTTScout home">OTT<span>Scout</span></a><span class="region">Streaming in India</span></header>
+<header class="site-header"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><span class="region">Streaming in India</span></header>
 <nav class="seo-nav seo-navigation" aria-label="Browse streaming">{navigation}</nav><main id="main" class="seo-page" tabindex="-1">
 <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">OTTScout</a><span aria-hidden="true"> / </span><span aria-current="page">{escape(title)}</span></nav>
 <h1>{escape(title)}</h1><p class="seo-description">{escape(description)}</p>{content}
 <section class="credits" aria-label="Data credits"><h2>Data credits</h2><a href="https://www.themoviedb.org"><img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg" width="56" height="40" alt="TMDB"></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></main>
-<footer class="seo-footer"><nav class="seo-nav" aria-label="Site information"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a><a href="/guides/telugu-weekend-picks/">Weekend picks</a></nav><p>India · Availability may change. Audio and subtitles vary by platform.</p><a href="https://www.movieofthenight.com/about/api">Streaming data by Movie of the Night</a></footer><script src="/analytics.js?v=2" defer></script></body></html>'''
+<footer class="seo-footer"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><nav class="seo-nav" aria-label="Site information"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a><a href="/guides/telugu-weekend-picks/">Weekend picks</a></nav><p>India · Availability may change. Audio and subtitles vary by platform.</p><a href="https://www.movieofthenight.com/about/api">Streaming data by Movie of the Night</a></footer><script src="/analytics.js?v=2" defer></script></body></html>'''
         dest = target / path.strip('/') / 'index.html'
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(markup, encoding='utf-8')

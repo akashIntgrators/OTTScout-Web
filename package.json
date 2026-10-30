@@ -4,8 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "python3 -m http.server 5174 --bind 127.0.0.1",
+    "brand:assets": "node scripts/build_brand_assets.mjs",
     "check": "node --check app.js",
     "test": "python3 -m unittest discover -s tests -v",
     "build": "python3 scripts/build_site.py"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2"
   }
 }

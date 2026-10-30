@@ -1,5 +1,7 @@
 # OTTScout
 
+The approved mint double-ring identity is shared across website headers, browser and home-screen icons, link previews and the native prototypes. See [brand assets and regeneration](docs/branding.md).
+
 India-first movie and series discovery, hosted on GitHub Pages at http://ottscout.techiwithhelmet.com/. Supports seven OTT filters, six audio languages, positive checkbox filters, All / Movies / Series, a seven-day additions feed, and a browser-local watchlist. The slate-and-mint interface follows the Integration Labs palette, with reserved advertisement placements.
 
 ## Live catalog pilot

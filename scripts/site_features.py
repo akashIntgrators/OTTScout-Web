@@ -72,11 +72,14 @@ def apply_reports(catalog, reports):
 
 def schema_graph(path, title, description, work=None):
     canonical = BASE + path
+    publisher = {'@type':'Organization','@id':BASE+'/#organization','name':'OTTScout','url':BASE+'/',
+                 'logo':{'@type':'ImageObject','url':BASE+'/assets/ottscout-icon.png?v=brand14','caption':'OTTScout'}}
     website = {'@type':'WebSite','@id':BASE+'/#website','name':'OTTScout','url':BASE+'/',
-               'description':'India-first streaming discovery with platform-specific audio and sourced accessibility reports.','inLanguage':'en'}
+               'description':'India-first streaming discovery with platform-specific audio and sourced accessibility reports.','inLanguage':'en',
+               'publisher':{'@id':publisher['@id']}}
     page = {'@type':'WebPage','@id':canonical+'#webpage','url':canonical,'name':title,
             'description':description,'inLanguage':'en','isPartOf':{'@id':BASE+'/#website'}}
-    graph = [website, page]
+    graph = [website, page, publisher]
     if path != '/':
         breadcrumb = {'@type':'BreadcrumbList','@id':canonical+'#breadcrumb','itemListElement':[
             {'@type':'ListItem','position':1,'name':'OTTScout','item':BASE+'/'},
