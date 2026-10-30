@@ -1,0 +1,82 @@
+name: Publish OTTScout website
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ottscout-catalog-pilot
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reuse the last published catalogue without API imports
+        shell: bash
+        run: |
+          mkdir -p data
+          curl --fail --show-error --silent --location --retry 3 --retry-max-time 60 --connect-timeout 15 --max-time 60 \
+            --output data/catalog.json https://ottscout.techiwithhelmet.com/data/catalog.json
+          python - <<'PYCODE'
+          import hashlib, json, os
+          from pathlib import Path
+          raw = Path('data/catalog.json').read_bytes()
+          catalog = json.loads(raw)
+          if not isinstance(catalog, dict) or type(catalog.get('schemaVersion')) is not int or catalog['schemaVersion'] != 1:
+              raise SystemExit('Published catalogue must have schemaVersion 1')
+          if catalog.get('mode') != 'live':
+              raise SystemExit('Published catalogue must be live')
+          if not isinstance(catalog.get('titles'), list) or not catalog['titles']:
+              raise SystemExit('Published catalogue must contain titles')
+          Path(os.environ['RUNNER_TEMP'], 'ottscout-published-catalogue.sha256').write_text(hashlib.sha256(raw).hexdigest())
+          print(f'Reusing {len(catalog["titles"])} published titles; source timestamps are unchanged.')
+          PYCODE
+      - name: Check browser JavaScript
+        run: node --check app.js
+      - name: Run offline tests
+        run: python -m unittest discover -s tests -v
+      - name: Build website with the published snapshot
+        run: python scripts/build_site.py
+      - name: Preserve the exact published catalogue bytes
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import hashlib, os, shutil
+          from pathlib import Path
+          source = Path('data/catalog.json')
+          target = Path('.site/data/catalog.json')
+          expected = Path(os.environ['RUNNER_TEMP'], 'ottscout-published-catalogue.sha256').read_text()
+          if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+              raise SystemExit('Source catalogue changed during website checks')
+          # The normal builder reapplies description reports to its staged copy.
+          # A website-only publication must retain the already published data.
+          shutil.copyfile(source, target)
+          if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+              raise SystemExit('Staged catalogue differs from the published snapshot')
+          print('Published catalogue preserved byte-for-byte; no provider or TMDB imports ran.')
+          PYCODE
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .site
+      - name: Deploy Pages website
+        id: deployment
+        uses: actions/deploy-pages@v4
