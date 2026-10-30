@@ -119,3 +119,14 @@ if(matchingOffers(missingAudioTitle).length)throw Error('Unknown audio counted a
 originalOnly=false;audioDescriptionOnly=true;
 if(matchingOffers(missingAudioTitle).length)throw Error('Unknown audio counted as description');
 `,context);
+
+vm.runInContext(`
+const prompts=[{id:'a',title:'Drive',year:2011,type:'Movie'},{id:'b',title:'Drive',year:2019,type:'Movie'},{id:'c',title:'Drive Away',year:2020,type:'Movie'},{id:'d',title:'Night Drive',year:2022,type:'Movie'}];
+if(suggestTitles('d',prompts).length)throw Error('Suggestions start too soon');
+if(suggestTitles('drive',prompts).map(t=>t.id).join(',')!=='b,a,c,d')throw Error('Suggestion ranking or duplicate identity lost');
+if(suggestTitles('DRIVE',prompts,2).length!==2)throw Error('Suggestion limit ignored');
+if(suggestTitles('zzzz',prompts).length)throw Error('Unmatched suggestion returned');
+if(suggestTitles('cafe',[{id:'e',title:'Café Society',year:2016}]).length!==1)throw Error('Diacritics prevent search');
+if(suggestTitles('  drive  ',prompts).length!==4)throw Error('Whitespace prevents suggestions');
+`,context);
+console.log('Autocomplete ranking, limits, duplicate titles and accent matching passed.');
