@@ -376,3 +376,34 @@ class CatalogTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ReportedTitleTests(unittest.TestCase):
+    def test_exact_provider_identity_and_recent_offer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=sync.open_db(Path(folder)/'catalog.sqlite')
+            sync.set_meta(db,'coverage',{'mapping':{'Netflix':'netflix'}});db.commit()
+            item=show();item['title']='Baththa';item['streamingOptions']['in'][0]['link']='https://www.netflix.com/title/83064751'
+            class Lookup:
+                calls=0
+                def get(self,endpoint,params):
+                    self.calls+=1
+                    self.asserted=(endpoint,params)
+                    return [item]
+            client=Lookup();rows=[{'title':'Baththa','netflixId':'83064751'}]
+            self.assertEqual(sync.recheck_reported_titles(db,client,NOW,rows),1)
+            self.assertEqual(db.execute('SELECT count(*) FROM events').fetchone()[0],1)
+            self.assertEqual(sync.recheck_reported_titles(db,client,NOW+86401,rows),0)
+            self.assertEqual(client.calls,1)
+    def test_same_title_wrong_provider_id_is_not_imported(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=sync.open_db(Path(folder)/'catalog.sqlite')
+            sync.set_meta(db,'coverage',{'mapping':{'Netflix':'netflix'}});db.commit()
+            item=show();item['title']='Baththa'
+            class Lookup:
+                calls=0
+                def get(self,*args):self.calls+=1;return [item]
+            client=Lookup();rows=[{'title':'Baththa','netflixId':'83064751'}]
+            self.assertEqual(sync.recheck_reported_titles(db,client,NOW,rows),0)
+            self.assertEqual(db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+            sync.recheck_reported_titles(db,client,NOW+1,rows)
+            self.assertEqual(client.calls,1)
