@@ -512,6 +512,7 @@ $('#search').oninput=searchInput;
 $('#search').oncompositionend=searchInput;
 $('#search').onfocus=renderSuggestions;
 $('#search').onblur=closeSuggestions;
+document.addEventListener('pointerdown',event=>{if(!event.target.closest?.('.search-autocomplete'))closeSuggestions();});
 $('#reset-filters').onclick=resetFilters;
 $('#audio-description-only').checked=audioDescriptionOnly;
 $('#audio-description-only').onchange=()=>{audioDescriptionOnly=$('#audio-description-only').checked;persist('ottscout-audio-description',[audioDescriptionOnly]);visibleLimit=PAGE_SIZE;render();};
