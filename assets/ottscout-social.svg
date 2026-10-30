@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#10161d"/><svg x="100" y="160" width="300" height="300" viewBox="112 112 800 800">
+  <title>OTTScout</title>
+  <g fill="#8be0c3">
+    <circle cx="512" cy="512" r="352" fill="none" stroke="#8be0c3" stroke-width="72"/>
+    <path d="M566 288.43a230 230 0 1 1-108 0" fill="none" stroke="#8be0c3" stroke-width="68"/>
+    <path d="M423 208Q476 190 476 245V584Q476 600 492 600H532Q548 600 548 584V245Q548 190 601 208V144H423Z"/>
+  </g>
+</svg><text x="458" y="315" fill="#e0e8ed" font-family="Arial,sans-serif" font-size="94" font-weight="700">OTT<tspan fill="#8be0c3" font-weight="400">Scout</tspan></text><text x="462" y="377" fill="#aebdc8" font-family="Arial,sans-serif" font-size="29">Find it. Save it. Watch it.</text></svg>
