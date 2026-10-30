@@ -12,7 +12,7 @@ REPORT={'platform':'Netflix','providerTitleId':'123','title':'A title','type':'M
 
 class HTMLAudit(HTMLParser):
     def __init__(self):
-        super().__init__();self.ids=[];self.main=0;self.references=[];self.unnamed_generic=[]
+        super().__init__();self.ids=[];self.main=0;self.references=[];self.unnamed_generic=[];self.brand_links=[];self.brand_marks=[];self.metadata={}
     def handle_starttag(self,tag,attrs):
         a=dict(attrs)
         if 'id' in a:self.ids.append(a['id'])
@@ -20,8 +20,28 @@ class HTMLAudit(HTMLParser):
         for key in ('aria-describedby','aria-labelledby','aria-controls'):
             self.references.extend((a.get(key) or '').split())
         if tag in ('div','span') and 'aria-label' in a and not a.get('role'):self.unnamed_generic.append(a)
+        if tag=='a' and 'brand' in a.get('class','').split():self.brand_links.append(a)
+        if tag=='img' and 'brand-mark' in a.get('class','').split():self.brand_marks.append(a)
+        if tag=='meta':self.metadata[a.get('property') or a.get('name')]=a.get('content')
 
 class SiteFeatureTests(unittest.TestCase):
+    def assert_brand_identity(self,text):
+        audit=HTMLAudit();audit.feed(text)
+        self.assertEqual(len(audit.brand_links),2)
+        self.assertTrue(all(link.get('aria-label')=='OTTScout home' and link.get('href') in ('/','./') for link in audit.brand_links))
+        self.assertEqual(len(audit.brand_marks),2)
+        self.assertTrue(all(mark.get('src')=='/assets/ottscout-mark.svg?v=brand14' and mark.get('alt')=='' and mark.get('width')=='36' and mark.get('height')=='36' for mark in audit.brand_marks))
+        self.assertNotIn('◉',text)
+        self.assertIn('href="/favicon.ico?v=brand14"',text)
+        for filename in ('ottscout-icon.svg','ottscout-icon.png','ottscout-touch-icon.png'):
+            self.assertIn('/assets/'+filename+'?v=brand14',text)
+        self.assertEqual(audit.metadata.get('og:image'),'https://ottscout.techiwithhelmet.com/assets/ottscout-social.png?v=brand14')
+        self.assertEqual(audit.metadata.get('og:image:width'),'1200')
+        self.assertEqual(audit.metadata.get('og:image:height'),'630')
+        self.assertEqual(audit.metadata.get('twitter:card'),'summary_large_image')
+        self.assertEqual(audit.metadata.get('twitter:image'),audit.metadata.get('og:image'))
+        self.assertEqual(audit.metadata.get('twitter:image:alt'),audit.metadata.get('og:image:alt'))
+
     def test_exact_provider_source_required(self):
         self.assertEqual(netflix_id('https://www.netflix.com/watch/123?x=1'),'123')
         for bad in ['http://netflix.com/title/123','https://netflix.com.evil.test/title/123','https://evil@netflix.com/title/123','https://netflix.com:444/title/123','https://netflix.com/title/123/trailer']:
@@ -58,10 +78,17 @@ class SiteFeatureTests(unittest.TestCase):
         self.assertEqual(payload['@graph'][-1]['name'],title)
         self.assertNotIn('aggregateRating',payload['@graph'][-1])
         self.assertNotIn('accessibilityFeature',payload['@graph'][-1])
-        self.assertEqual(payload['@graph'][2]['itemListElement'][1]['item'],'https://ottscout.techiwithhelmet.com/titles/123/')
+        entities={entity['@type']:entity for entity in payload['@graph']}
+        self.assertEqual(entities['BreadcrumbList']['itemListElement'][1]['item'],'https://ottscout.techiwithhelmet.com/titles/123/')
+        publisher=entities['Organization']
+        self.assertEqual(entities['WebSite']['publisher'],{'@id':publisher['@id']})
+        self.assertEqual(publisher['name'],'OTTScout')
+        self.assertEqual(publisher['logo']['@type'],'ImageObject')
+        self.assertEqual(publisher['logo']['url'],'https://ottscout.techiwithhelmet.com/assets/ottscout-icon.png?v=brand14')
 
     def test_dashboard_semantics_and_reference_targets(self):
         text=(Path(__file__).parents[1]/'index.html').read_text()
+        self.assert_brand_identity(text)
         audit=HTMLAudit();audit.feed(text)
         self.assertEqual(audit.main,1)
         self.assertEqual(len(audit.ids),len(set(audit.ids)))
@@ -76,11 +103,15 @@ class SiteFeatureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             for n in ('index.html','app.js','style.css','CNAME'):(root/n).write_text('<head><!-- SEO:STRUCTURED_DATA --></head>')
+            (root/'index.html').write_text((Path(__file__).parents[1]/'index.html').read_text())
             (root/'data').mkdir()
             (root/'data/audio-description.json').write_text(json.dumps({'schemaVersion':1,'reports':[REPORT]}))
             title={'id':'motn:99','title':'A title','type':'Movie','year':2025,'offers':[{'platform':'Netflix','link':'https://www.netflix.com/title/123','audio':['English'],'subtitles':[],'type':'subscription'}]}
             (root/'data/catalog.json').write_text(json.dumps({'titles':[title],'updatedAt':'2026-10-29'}))
             target=build(root,NOW)
+            for html_page in target.rglob('index.html'):
+                with self.subTest(page=html_page.relative_to(target)):
+                    self.assert_brand_identity(html_page.read_text())
             detail=(target/'titles/99/index.html').read_text()
             self.assertIn('A title (2025) — where to watch',detail)
             self.assertIn('Audio description reported: Hindi',detail)
