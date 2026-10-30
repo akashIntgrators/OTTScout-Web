@@ -71,3 +71,17 @@ class DiscoveryBuildTests(unittest.TestCase):
             self.assertIn('No confident TMDB match',detail)
             self.assertIn('Availability checked',detail)
             self.assertIn('Netflix',detail) # Discover/details preserve older offers.
+
+class UnknownAudioPages(unittest.TestCase):
+    def test_unknown_audio_has_title_page_and_weekly_but_not_language_match(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            for name in ('index.html','app.js','style.css','CNAME'):(root/name).write_text('')
+            (root/'data').mkdir()
+            title={'id':'motn:unknown','title':'Unknown Audio Film','type':'Movie','weekly':True,'weeklyPlatforms':['Netflix'],'weeklyUpdatedAt':1000000,'offers':[{'platform':'Netflix','type':'subscription','audio':[],'subtitles':[],'link':'https://www.netflix.com/title/123'}]}
+            (root/'data/catalog.json').write_text(json.dumps({'titles':[title],'updatedAt':'2026-10-30'}))
+            site=module.build(root,now=1000001)
+            self.assertIn('Unknown Audio Film',(site/'this-week/index.html').read_text())
+            self.assertIn('Audio languages unverified',(site/'this-week/index.html').read_text())
+            self.assertNotIn('Unknown Audio Film',(site/'languages/tamil/index.html').read_text())
+            self.assertIn('Netflix',(site/'titles/unknown/index.html').read_text())

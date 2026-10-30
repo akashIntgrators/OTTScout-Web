@@ -107,3 +107,15 @@ if(availablePlatforms().join('|')!=='Netflix|Prime Video')throw Error('Inactive 
 liveCatalog=null;
 if(availablePlatforms().length!==platforms.length)throw Error('Sample choices missing');
 `,context);
+vm.runInContext(`
+view='discover';liveCatalog=null;selectedOriginals=null;originalOnly=false;audioDescriptionOnly=false;subscriptionOnly=false;
+selectedLanguages.clear();languages.forEach(l=>selectedLanguages.add(l));selectedPlatforms.clear();platforms.forEach(p=>selectedPlatforms.add(p));
+const missingAudioTitle={originalLanguage:'Tamil',offers:[{platform:'Netflix',type:'subscription',audio:[]}]};
+if(matchingOffers(missingAudioTitle).length!==1)throw Error('Unknown audio hidden under all languages');
+selectedLanguages.clear();selectedLanguages.add('Tamil');
+if(matchingOffers(missingAudioTitle).length)throw Error('Unknown audio matched Tamil');
+languages.forEach(l=>selectedLanguages.add(l));originalOnly=true;
+if(matchingOffers(missingAudioTitle).length)throw Error('Unknown audio counted as original');
+originalOnly=false;audioDescriptionOnly=true;
+if(matchingOffers(missingAudioTitle).length)throw Error('Unknown audio counted as description');
+`,context);

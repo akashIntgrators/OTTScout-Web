@@ -419,3 +419,49 @@ class OfficialAudioTests(unittest.TestCase):
         self.assertEqual(sync.supplement_reported_audio(wrong,[row],NOW)['offers'][0]['audio'],[])
         existing=copy.deepcopy(title);existing['offers'][0]['audio']=['Hindi']
         self.assertEqual(sync.supplement_reported_audio(existing,[row],NOW)['offers'][0]['audio'],['Hindi'])
+
+class ReliabilityTests(unittest.TestCase):
+    def test_unknown_audio_exported_without_fabrication_and_other_languages_excluded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=sync.open_db(Path(folder)/'db.sqlite')
+            unknown=show('unknown');unknown['streamingOptions']['in'][0]['audios']=[]
+            sync.save_show(db,unknown,{'Netflix':'netflix'},NOW)
+            sync.save_show(db,show('other',audio='jpn'),{'Netflix':'netflix'},NOW)
+            no_offer=show('removed');no_offer['streamingOptions']['in']=[]
+            sync.save_show(db,no_offer,{'Netflix':'netflix'},NOW)
+            sync.set_meta(db,'last_success',NOW);db.commit()
+            output=Path(folder)/'catalog.json';sync.export_catalog(db,output,NOW+8*sync.DAY)
+            titles=json.loads(output.read_text())['titles']
+            self.assertEqual([t['id'] for t in titles],['motn:unknown'])
+            offer=titles[0]['offers'][0]
+            self.assertEqual(offer['audio'],[])
+            self.assertEqual(offer['audioStatus'],'unverified')
+            self.assertEqual(offer['availabilityCheckedAt'],NOW)
+            quality=sync.report(db,NOW+8*sync.DAY)['catalog']
+            self.assertEqual(quality['titlesWithUnknownAudio'],1)
+            self.assertEqual(quality['titlesWithoutOffers'],1)
+            self.assertEqual(quality['titlesNotCheckedFor7Days'],3)
+    def test_failed_recheck_preserves_catalogue_and_is_cooled_down(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=sync.open_db(Path(folder)/'db.sqlite')
+            sync.set_meta(db,'coverage',{'mapping':{'Netflix':'netflix'}})
+            sync.save_show(db,show(),{'Netflix':'netflix'},NOW);db.commit()
+            class Offline:
+                calls=0
+                def get(self,*args):self.calls+=1;raise sync.SyncError('offline')
+            client=Offline();rows=[{'title':'Missing','netflixId':'123'}]
+            sync.recheck_reported_titles(db,client,NOW,rows)
+            sync.recheck_reported_titles(db,client,NOW+10,rows)
+            self.assertEqual(client.calls,1)
+            self.assertEqual(db.execute('SELECT count(*) FROM titles').fetchone()[0],1)
+            self.assertEqual(sync.get_meta(db,'title_recheck:netflix:123')['status'],'lookup_failed')
+    def test_failed_sync_never_replaces_public_snapshot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dbpath=Path(folder)/'db.sqlite';db=sync.open_db(dbpath)
+            sync.set_meta(db,'pilot_started',NOW-100)
+            sync.set_meta(db,'last_success',NOW-10);db.commit();db.close()
+            output=Path(folder)/'catalog.json';output.write_text('previous validated snapshot')
+            args=['catalog_sync.py','--db',str(dbpath),'--export',str(output),'--report',str(Path(folder)/'report.json'),'--allow-cached-on-limit']
+            with patch.object(sys,'argv',args),patch.dict(os.environ,{'STREAMING_API_KEY':'test'}),patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'sync',side_effect=sync.SyncError('network failure')):
+                self.assertEqual(sync.main(),1)
+            self.assertEqual(output.read_text(),'previous validated snapshot')
