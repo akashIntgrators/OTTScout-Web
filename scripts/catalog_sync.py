@@ -471,12 +471,32 @@ def report(db, now):
             'changesByPlatform': {name: db.execute('SELECT count(*) FROM events WHERE platform=?', (name,)).fetchone()[0] for name in PLATFORMS},
             'successfulRunsWithoutChanges': sum(r[1] == 'success' and r[3] == 0 for r in runs)}
 
+def supplement_reported_audio(title, records, now):
+    """Use a dated official Netflix listing only when provider audio is missing."""
+    for row in records:
+        ident=row.get('netflixId');source=urlparse(row.get('sourceURL',''))
+        checked=row.get('checkedAt');audio=row.get('audio')
+        if (not isinstance(ident,str) or not ident.isdigit() or source.scheme!='https'
+            or source.hostname!='www.netflix.com' or source.path!='/in/title/'+ident
+            or type(checked) is not int or not now-30*DAY<=checked<=now
+            or not isinstance(audio,list) or not audio or not all(x in LANGUAGES.values() for x in audio)):continue
+        for offer in title['offers']:
+            url=urlparse(offer.get('link') or '')
+            if offer['platform']=='Netflix' and url.hostname in ('netflix.com','www.netflix.com') and url.path.rstrip('/').split('/')[-1]==ident and not offer['audio']:
+                offer['audio']=list(dict.fromkeys(audio));offer['audioSource']=row['sourceURL'];offer['audioCheckedAt']=checked
+    return title
+
 def export_catalog(db, path, now):
     if not get_meta(db, 'last_success'):
         return False
     rows = []
+    correction_path=Path(__file__).resolve().parents[1]/'data/title-rechecks.json'
+    corrections=json.loads(correction_path.read_text()) if correction_path.exists() else []
     for raw, first_seen, last_checked in db.execute('SELECT body,first_seen,last_checked FROM titles ORDER BY id'):
-        title = json.loads(raw)
+        title = supplement_reported_audio(json.loads(raw),corrections,now)
+        for correction in corrections:
+            if title['title'].casefold()==correction['title'].casefold():
+                print('Reported title export: '+json.dumps({'title':title['title'],'offers':[{'platform':o['platform'],'audio':o['audio'],'availableSince':o.get('availableSince')} for o in title['offers']]}))
         if title['id'] in ORIGINAL_LANGUAGE_CORRECTIONS:
             title['originalLanguage'] = ORIGINAL_LANGUAGE_CORRECTIONS[title['id']]
         # Exclude unknown or non-target audio rather than infer dubbing from original language.
