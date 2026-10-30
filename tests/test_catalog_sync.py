@@ -407,3 +407,15 @@ class ReportedTitleTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
             sync.recheck_reported_titles(db,client,NOW+1,rows)
             self.assertEqual(client.calls,1)
+
+class OfficialAudioTests(unittest.TestCase):
+    def test_missing_audio_only_exact_source_with_expiry(self):
+        title={'offers':[{'platform':'Netflix','link':'https://www.netflix.com/title/83064751','audio':[]}]}
+        row={'netflixId':'83064751','sourceURL':'https://www.netflix.com/in/title/83064751','audio':['Tamil'],'checkedAt':NOW}
+        filled=sync.supplement_reported_audio(copy.deepcopy(title),[row],NOW)
+        self.assertEqual(filled['offers'][0]['audio'],['Tamil'])
+        self.assertEqual(sync.supplement_reported_audio(copy.deepcopy(title),[row],NOW+31*sync.DAY)['offers'][0]['audio'],[])
+        wrong=copy.deepcopy(title);wrong['offers'][0]['link']='https://www.netflix.com/title/1234'
+        self.assertEqual(sync.supplement_reported_audio(wrong,[row],NOW)['offers'][0]['audio'],[])
+        existing=copy.deepcopy(title);existing['offers'][0]['audio']=['Hindi']
+        self.assertEqual(sync.supplement_reported_audio(existing,[row],NOW)['offers'][0]['audio'],['Hindi'])
