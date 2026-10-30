@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 PLATFORMS = {
@@ -507,6 +507,44 @@ def export_catalog(db, path, now):
     temporary.replace(target)
     return True
 
+def recheck_reported_titles(db, client, now, records=None):
+    """One bounded title lookup per day for unresolved reports; require exact provider identity."""
+    if records is None:
+        path = Path(__file__).resolve().parents[1] / 'data/title-rechecks.json'
+        records = json.loads(path.read_text()) if path.exists() else []
+    mapping = get_meta(db, 'coverage', {}).get('mapping', {})
+    if not mapping: return 0
+    for row in records:
+        ident = row.get('netflixId', '')
+        if not isinstance(ident,str) or not ident.isdigit() or not isinstance(row.get('title'),str):
+            raise SyncError('Invalid reported title lookup')
+        key='title_recheck:netflix:'+ident
+        state=get_meta(db,key,{})
+        if state.get('resolved') or now-state.get('checkedAt',0)<DAY: continue
+        results=client.get('/shows/search/title',{'title':row['title'],'country':'in','show_type':'movie','series_granularity':'show'})
+        if not isinstance(results,list): raise SyncError('Invalid title search response')
+        matches=[]
+        for show in results:
+            body=normalize(show,mapping,now)
+            for offer in body['offers']:
+                url=urlparse(offer.get('link') or '')
+                if offer['platform']=='Netflix' and url.hostname in ('netflix.com','www.netflix.com') and url.path.rstrip('/').split('/')[-1]==ident:
+                    matches.append((show,body));break
+        if len(matches)>1: raise SyncError('Ambiguous provider identity in title search')
+        changed=0
+        if matches:
+            show,body=matches[0];changed=save_show(db,show,mapping,now)
+            for offer in body['offers']:
+                added=offer.get('availableSince')
+                if offer['platform']=='Netflix' and type(added) is int and now-7*DAY<=added<=now:
+                    event=json.dumps(['title-recheck',body['id'],'Netflix',added])
+                    db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)',(event,body['id'],'Netflix','new',added))
+        set_meta(db,key,{'checkedAt':now,'resolved':bool(matches),'title':row['title'],'matches':len(matches)})
+        db.commit()
+        print('Reported title recheck: '+row['title']+' — '+('imported exact Netflix match' if matches else 'provider has no matching Netflix India offer'))
+        return changed
+    return 0
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--db', default='.state/catalog.sqlite')
@@ -544,7 +582,8 @@ def main():
                         int(os.environ.get('MONTHLY_REQUEST_LIMIT', '400')),
                         int(os.environ.get('RUN_REQUEST_LIMIT', '12')))
         try:
-            changed = sync(db, client, now)
+            changed = recheck_reported_titles(db, client, now)
+            changed += sync(db, client, now)
             status, message = 'success', 'Catalog check completed'
         except BudgetReached as error:
             db.rollback()
