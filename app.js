@@ -23,6 +23,9 @@ let audioDescriptionOnly = readList('ottscout-audio-description')?.[0] === true;
 let shortcutsEnabled = readList('ottscout-shortcuts')?.[0] === true;
 let announcementTimer;
 let visibleLimit = PAGE_SIZE;
+let selectedSearchId=null;
+let suggestions=[];
+let activeSuggestion=-1;
 const storedGenres = readList('ottscout-genres');
 let selectedGenres = storedGenres && !storedGenres.includes('*') ? new Set(storedGenres) : null;
 let originalOnly = readList('ottscout-original-only')?.[0] === true;
@@ -389,11 +392,69 @@ function emptyState() {
   if(audioDescriptionOnly){const guide=element('a','Read the audio-description guide');guide.href='/audio-description/';node.append(guide);}
   return node;
 }
+function normalizeSearch(value) {
+  return value.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase().trim();
+}
+function suggestTitles(query, items, limit=6) {
+  const q=normalizeSearch(query);
+  if(q.length<2)return [];
+  return items.filter(t=>normalizeSearch(t.title).includes(q)).sort((a,b)=>{
+    const rank=t=>normalizeSearch(t.title)===q?0:normalizeSearch(t.title).startsWith(q)?1:2;
+    return rank(a)-rank(b)||(b.year||0)-(a.year||0)||a.title.localeCompare(b.title)||String(a.id).localeCompare(String(b.id));
+  }).slice(0,limit);
+}
+function closeSuggestions() {
+  suggestions=[];activeSuggestion=-1;$('#search-suggestions').hidden=true;
+  $('#search').setAttribute('aria-expanded','false');$('#search').removeAttribute('aria-activedescendant');
+  $('#suggestion-status').textContent='';
+}
+function highlightSuggestion(index) {
+  activeSuggestion=index;
+  document.querySelectorAll('#search-suggestions [role="option"]').forEach((node,i)=>node.setAttribute('aria-selected',i===index?'true':'false'));
+  if(index>=0){$('#search').setAttribute('aria-activedescendant','search-option-'+index);$('#search-option-'+index).scrollIntoView({block:'nearest'});}
+  else $('#search').removeAttribute('aria-activedescendant');
+}
+function chooseSuggestion(title) {
+  $('#search').value=title.title;selectedSearchId=title.id;visibleLimit=PAGE_SIZE;
+  closeSuggestions();setView('discover');$('#search').blur();$('#heading').focus();
+}
+function renderSuggestions() {
+  const eligible=titles.filter(t=>matchingGenres(t)&&matchingOffers(t,false).length&&!dismissed.has(t.id)&&(contentType==='all'||t.type===contentType));
+  suggestions=suggestTitles($('#search').value,eligible);activeSuggestion=-1;
+  const list=$('#search-suggestions');list.replaceChildren();
+  if(!suggestions.length){closeSuggestions();return;}
+  suggestions.forEach((title,i)=>{
+    const option=element('div',undefined,'search-option');option.id='search-option-'+i;
+    option.setAttribute('role','option');option.setAttribute('aria-selected','false');
+    option.append(element('span',title.title,'suggestion-title'),element('span',`${title.year||'Year unverified'} · ${title.type}`,'suggestion-meta'));
+    option.onpointerdown=event=>event.preventDefault();
+    option.onclick=()=>chooseSuggestion(title);list.append(option);
+  });
+  list.hidden=false;$('#search').setAttribute('aria-expanded','true');$('#search').removeAttribute('aria-activedescendant');
+  $('#suggestion-status').textContent=`${suggestions.length} title suggestion${suggestions.length===1?'':'s'}. Use up and down arrows, then Enter to select.`;
+}
+function searchInput(event) {
+  if(event?.isComposing)return;
+  selectedSearchId=null;visibleLimit=PAGE_SIZE;
+  if($('#search').value.trim()&&view==='weekly')setView('discover');else render();
+  renderSuggestions();
+}
+function searchKeydown(event) {
+  if(event.isComposing)return;
+  if((event.key==='ArrowDown'||event.key==='ArrowUp')&&suggestions.length){
+    event.preventDefault();highlightSuggestion(event.key==='ArrowDown'?(activeSuggestion+1)%suggestions.length:(activeSuggestion<=0?suggestions.length-1:activeSuggestion-1));
+  }else if(event.key==='Escape'&&!$('#search-suggestions').hidden){event.preventDefault();event.stopPropagation();closeSuggestions();}
+  else if(event.key==='Enter'){
+    event.preventDefault();
+    if(activeSuggestion>=0&&suggestions[activeSuggestion])chooseSuggestion(suggestions[activeSuggestion]);
+    else{closeSuggestions();$('#search').blur();$('#heading').focus();}
+  }
+}
 function render() {
   activeFilterChips();
-  const query = $('#search').value.toLocaleLowerCase().trim();
+  const query = normalizeSearch($('#search').value);
   const found = titles.filter(title => matchingGenres(title) && matchingOffers(title).length
-    && title.title.toLocaleLowerCase().includes(query)
+    && (query&&selectedSearchId!==null?title.id===selectedSearchId:normalizeSearch(title.title).includes(query))
     && (view === 'watchlist' || !dismissed.has(title.id))
     && (contentType === 'all' || title.type === contentType)
     && (view !== 'watchlist' || saved.has(title.id))
@@ -446,8 +507,11 @@ $('#genre-clear').onclick=()=>{selectedGenres=new Set();persist('ottscout-genres
 $('#original-only').checked=originalOnly;
 $('#original-only').onchange=()=>{originalOnly=$('#original-only').checked;persist('ottscout-original-only',[originalOnly]);visibleLimit=PAGE_SIZE;render();};
 $('#restore-hidden').onclick=()=>{dismissed.clear();persist('ottscout-dismissed',dismissed);render();};
-$('#search').onkeydown=event=>{if(event.key==='Enter' && !event.isComposing){event.preventDefault();$('#search').blur();$('#heading').focus();}};
-$('#search').oninput=()=>{visibleLimit=PAGE_SIZE;if($('#search').value.trim() && view==='weekly')setView('discover');else render();};
+$('#search').onkeydown=searchKeydown;
+$('#search').oninput=searchInput;
+$('#search').oncompositionend=searchInput;
+$('#search').onfocus=renderSuggestions;
+$('#search').onblur=closeSuggestions;
 $('#reset-filters').onclick=resetFilters;
 $('#audio-description-only').checked=audioDescriptionOnly;
 $('#audio-description-only').onchange=()=>{audioDescriptionOnly=$('#audio-description-only').checked;persist('ottscout-audio-description',[audioDescriptionOnly]);visibleLimit=PAGE_SIZE;render();};
@@ -504,6 +568,7 @@ async function loadCatalog() {
     $('#catalog-status').textContent='Sample preview · Live catalog unavailable. Titles and streaming details below are illustrative.';
     $('#catalog-status').hidden=false;
   } finally {
+    if(document.activeElement===$('#search'))renderSuggestions();
     document.dispatchEvent(new Event('ottscout:ready'));
   }
 }
