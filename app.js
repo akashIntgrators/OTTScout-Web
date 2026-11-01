@@ -134,6 +134,30 @@ function groupWeeklyTitles(items, now = Date.now()/1000) {
     return group;
   });
 }
+function weeklyContextGroups(now = Date.now()/1000) {
+  if(!liveCatalog)return [];
+  const available=new Set(availablePlatforms());
+  const groups=new Map();
+  for(const title of titles){
+    if(dismissed.has(title.id)||!weeklyTitle(title))continue;
+    const offers=title.offers.filter(offer=>available.has(offer.platform)).map(offer=>({offer,timestamp:weeklyOfferDate(title,offer,now)})).filter(item=>item.timestamp!==null);
+    if(!offers.length)continue;
+    const timestamp=Math.max(...offers.map(item=>item.timestamp));
+    const key=new Date((timestamp+19800)*1000).toISOString().slice(0,10);
+    if(!groups.has(key))groups.set(key,{key,label:new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',weekday:'long',day:'numeric',month:'long'}).format(timestamp*1000),timestamp,ids:new Set(),platforms:new Set()});
+    const group=groups.get(key);group.ids.add(title.id);group.timestamp=Math.max(group.timestamp,timestamp);
+    offers.filter(item=>new Date((item.timestamp+19800)*1000).toISOString().slice(0,10)===key).forEach(item=>group.platforms.add(item.offer.platform));
+  }
+  return [...groups.values()].sort((a,b)=>b.key.localeCompare(a.key)).map(group=>({key:group.key,label:group.label,timestamp:group.timestamp,count:group.ids.size,platforms:platforms.filter(name=>group.platforms.has(name))}));
+}
+function weeklyDateGroups(found) {
+  const groups=new Map(weeklyContextGroups().map(group=>[group.key,{...group,titles:[]}]));
+  for(const group of groupWeeklyTitles(found)){
+    if(groups.has(group.key))groups.get(group.key).titles=group.titles;
+    else groups.set(group.key,{...group,count:group.titles.length,platforms:[]});
+  }
+  return [...groups.values()].sort((a,b)=>a.key==='unverified'?1:b.key==='unverified'?-1:b.key.localeCompare(a.key));
+}
 function expiringOffers(title, now = Date.now()/1000) {
   return matchingOffers(title,false).filter(offer=>Number.isFinite(offer.expiresOn)&&offer.expiresOn>now&&offer.expiresOn<=now+30*DAY&&(!Number.isFinite(offer.availableSince)||offer.availableSince<=now)).sort((a,b)=>a.expiresOn-b.expiresOn);
 }
@@ -380,7 +404,7 @@ function activeFilterChips() {
   if(audioDescriptionOnly)chip('Audio description reported',()=>{audioDescriptionOnly=false;$('#audio-description-only').checked=false;persist('ottscout-audio-description',[false]);});
   $('#active-filters').replaceChildren(...chips);
   const count=$('#filter-count');
-  if(count){count.textContent=`${chips.length} active`;count.hidden=chips.length===0;}
+  if(count){count.textContent=chips.length?`${chips.length} active`:'All selected';count.hidden=false;}
 }
 function reportText(title, category, platform, correction) {
   const offers=(title.offers||[]).filter(o=>platform==='All listed platforms'||o.platform===platform);
@@ -439,18 +463,30 @@ function syncQuickFilters() {
   const available=new Set(availablePlatforms());
   document.querySelectorAll('.quick-platform').forEach(button=>{const active=available.has(button.dataset.platform);button.hidden=!active;button.disabled=!active;button.setAttribute('aria-pressed',active&&selectedPlatforms.has(button.dataset.platform));});
   document.querySelectorAll('.quick-language').forEach(button=>button.setAttribute('aria-pressed',selectedLanguages.has(button.dataset.language)));
+  for(const [kind,options,selected] of [['platform',[...available],selectedPlatforms],['language',languages,selectedLanguages]]){
+    const count=options.filter(name=>selected.has(name)).length;
+    const all=$('#quick-'+kind+'-all');if(all)all.setAttribute('aria-pressed',options.length>0&&count===options.length);
+    const status=$('#quick-'+kind+'-status');if(status)status.textContent=count===0?'None selected':count===options.length?`All ${options.length} selected`:`${count} of ${options.length} selected`;
+  }
 }
 function toggleQuickFilter(kind,name) {
   const options=kind==='platforms'?availablePlatforms():languages;
   if(!options.includes(name))return;
   const selected=kind==='platforms'?selectedPlatforms:selectedLanguages;
-  if(options.every(option=>selected.has(option))){selected.clear();selected.add(name);}
-  else if(selected.has(name))selected.delete(name);else selected.add(name);
+  if(selected.has(name))selected.delete(name);else selected.add(name);
+  persist('ottscout-'+kind,selected);visibleLimit=PAGE_SIZE;updateSelections();render();
+}
+function selectAllQuickFilters(kind) {
+  const selected=kind==='platforms'?selectedPlatforms:selectedLanguages;
+  const options=kind==='platforms'?availablePlatforms():languages;
+  selected.clear();options.forEach(name=>selected.add(name));
   persist('ottscout-'+kind,selected);visibleLimit=PAGE_SIZE;updateSelections();render();
 }
 function setupQuickFilters() {
   document.querySelectorAll('.quick-platform').forEach(button=>button.onclick=()=>toggleQuickFilter('platforms',button.dataset.platform));
   document.querySelectorAll('.quick-language').forEach(button=>button.onclick=()=>toggleQuickFilter('languages',button.dataset.language));
+  if($('#quick-platform-all'))$('#quick-platform-all').onclick=()=>selectAllQuickFilters('platforms');
+  if($('#quick-language-all'))$('#quick-language-all').onclick=()=>selectAllQuickFilters('languages');
   syncQuickFilters();
 }
 function setView(next, moveFocus=false) {
@@ -555,7 +591,7 @@ function filteredTitles(forView=view) {
     && (forView !== 'leaving' || earliestExpiry(title)!==null));
 }
 function weeklyGroupsContent(found) {
-  const groups=groupWeeklyTitles(found);
+  const groups=weeklyDateGroups(found);
   const rendered=[];
   const description=()=>{
     const open=rendered.filter(group=>group.node.open);
@@ -566,7 +602,7 @@ function weeklyGroupsContent(found) {
     group.open=weeklyOpen.has(data.key)?weeklyOpen.get(data.key):index===0;
     const summary=element('summary',undefined,'date-summary');
     const label=element('h2',data.label,'date-label');
-    const count=element('span',data.titles.length+' '+(data.titles.length===1?'title':'titles'),'date-count');
+    const count=element('span',data.titles.length?data.titles.length+' '+(data.titles.length===1?'title':'titles'):'0 matches','date-count');
     const chevron=element('span','⌄','date-chevron');chevron.setAttribute('aria-hidden','true');summary.append(label,count,chevron);group.append(summary);
     const body=element('div',undefined,'date-group-body');
     const list=element('div',undefined,'date-titles');
@@ -574,7 +610,14 @@ function weeklyGroupsContent(found) {
     const shown=Math.min(limit,data.titles.length);
     const adAfter=window.matchMedia('(max-width:650px)').matches?6:12;
     data.titles.slice(0,shown).forEach((title,i)=>{list.append(cardFor(title));if(i===adAfter-1&&data.titles.length>adAfter)list.append(adSlot());});
-    body.append(list);
+    if(data.titles.length)body.append(list);
+    else{
+      const note=element('div',undefined,'date-filtered');
+      note.append(element('p',`${data.count} ${data.count===1?'addition':'additions'} on ${data.platforms.join(', ')} ${data.count===1?'is':'are'} hidden by your filters.`));
+      const reset=element('button','Reset filters');reset.type='button';reset.setAttribute('aria-label','Reset filters and show additions for '+data.label);
+      reset.onclick=()=>{weeklyOpen.set(data.key,true);resetFilters();const restored=[...document.querySelectorAll('#catalog .date-group')].find(item=>item.dataset.date===data.key)?.querySelector('summary');(restored||$('#heading')).focus();};
+      note.append(reset);body.append(note);
+    }
     if(shown<data.titles.length){
       const more=element('button',`Show ${Math.min(PAGE_SIZE,data.titles.length-shown)} more · ${shown} of ${data.titles.length} shown`,'date-load-more');more.type='button';
       more.setAttribute('aria-label',`Show ${Math.min(PAGE_SIZE,data.titles.length-shown)} more titles for ${data.label}. ${shown} of ${data.titles.length} shown.`);
@@ -595,8 +638,9 @@ function updateDateToggle() {
 }
 function toggleAllDates() {
   if(view!=='weekly')return;
-  const open=![...document.querySelectorAll('#catalog .date-group')].some(group=>group.open);
-  groupWeeklyTitles(filteredTitles()).forEach(group=>weeklyOpen.set(group.key,open));
+  const groups=[...document.querySelectorAll('#catalog .date-group')];
+  const open=!groups.some(group=>group.open);
+  groups.forEach(group=>weeklyOpen.set(group.dataset.date,open));
   render();$('#toggle-dates').focus();
 }
 function pickRandomTitle() {

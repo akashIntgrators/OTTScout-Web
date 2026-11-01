@@ -68,11 +68,15 @@ button svg,.watch-options svg { width:18px; height:18px; fill:none; stroke:curre
 .filter-chevron { font-size:20px; }
 .filters-panel[open]>summary .filter-chevron { transform:rotate(180deg); }
 .quick-choices { margin-top:22px; }
-.quick-choices h2 { margin-bottom:7px; color:var(--muted); font-size:14px; font-weight:600; }
+.quick-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; }
+.quick-choices h2 { color:var(--text); font-size:14px; font-weight:600; }
+.quick-heading h2 small { display:block; color:var(--muted); font-size:12px; font-weight:400; }
+.quick-heading button { min-width:44px; min-height:44px; padding:6px 10px; border:1px solid var(--control); border-radius:5px; background:transparent; font-size:13px; }
+.quick-heading button[aria-pressed="true"] { border-color:var(--accent); background:var(--accent); color:var(--accent-ink); font-weight:600; }
 .quick-languages { display:grid; gap:2px; }
 .quick-language { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; min-height:44px; padding:3px 8px; border:0; border-radius:5px; background:transparent; text-align:left; }
 .quick-language:hover { background:var(--selection); }
-.quick-languages:has(.quick-language[aria-pressed="false"]) .quick-language[aria-pressed="true"] { background:var(--accent); color:var(--accent-ink); }
+.quick-language[aria-pressed="true"] { background:var(--selection); box-shadow:inset 3px 0 var(--accent); }
 .native-script { font-size:28px; line-height:1.4; font-weight:600; }
 .native-script:not(:lang(en)) { font-family:system-ui,-apple-system,'Nirmala UI',sans-serif; font-size:27px; }
 .quick-language small { font-size:12px; }
@@ -80,7 +84,8 @@ button svg,.watch-options svg { width:18px; height:18px; fill:none; stroke:curre
 .quick-platform { display:flex; align-items:center; justify-content:center; min-width:0; height:48px; padding:3px; border:2px solid transparent; border-radius:7px; background:transparent; }
 .quick-platform img { width:100%; height:38px; object-fit:contain; border-radius:4px; }
 .quick-platform:hover { border-color:var(--control); }
-.quick-platforms:has(.quick-platform[aria-pressed="false"]:not([hidden])) .quick-platform[aria-pressed="true"] { border-color:var(--accent); background:var(--selection); }
+.quick-platform[aria-pressed="true"] { border-color:var(--accent); background:var(--selection); }
+:root[data-theme="light"] :is(.quick-platform,.primary-platform) img { background:#173c37; }
 .advanced-filters { margin-top:18px; }
 .advanced-filters>summary { min-height:44px; padding:8px 0; font-weight:600; font-size:14px; list-style:none; }
 .advanced-filters[open]>summary>span { transform:rotate(180deg); }
@@ -147,6 +152,9 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .date-chevron { color:var(--accent); font-size:21px; }
 .date-group[open]>.date-summary .date-chevron { transform:rotate(180deg); }
 .date-group-body { padding:16px 0 8px; }
+.date-filtered { padding:16px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--muted); }
+.date-filtered p { margin-bottom:10px; }
+.date-filtered button { min-height:44px; padding:8px 14px; border:1px solid var(--control); border-radius:5px; background:var(--raised); color:var(--text); }
 .date-load-more { margin-top:16px; min-height:44px; padding:8px 16px; border:1px solid var(--control); border-radius:6px; background:var(--panel); }
 
 /* Each card is a small poster and a readable overview, not a full title page. */
@@ -329,7 +337,11 @@ footer .seo-nav { width:100%; margin:0; }
   footer>div { margin:0; flex-basis:100%; }
 }
 @media (max-width:360px) { .content-controls { gap:6px; } .type-toggle button { padding:6px 8px; } #pick-one { font-size:12px; padding:8px; gap:4px; } .card { grid-template-columns:76px minmax(0,1fr); gap:10px; } .date-label { font-size:17px; } }
-@media (forced-colors:active) { button,summary,.card { border:1px solid ButtonText; } :focus-visible { outline:3px solid Highlight!important; } }
+@media (forced-colors:active) {
+  button,summary,.card { border:1px solid ButtonText; }
+  :is(.quick-language,.quick-platform,.quick-heading button)[aria-pressed="true"] { outline:2px solid Highlight; outline-offset:-3px; }
+  :focus-visible { outline:3px solid Highlight!important; }
+}
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.01ms!important; animation-iteration-count:1!important; transition:none!important; scroll-behavior:auto!important; } }
 .primary-platform>span { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .offer-expiry,.expiry-label { margin-top:7px; color:var(--muted); font-size:12px; line-height:1.5; }

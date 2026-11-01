@@ -65,6 +65,8 @@ for (const [name,menu,names] of [['platforms',menus[0],['Netflix','Prime Video']
 }
 const quickPlatforms=['Netflix','Prime Video','SonyLIV'].map(name=>{const button=node('quick-'+name,'button',parameters);button.className='quick-platform';button.dataset.platform=name;return button;});
 const quickLanguages=['English','Hindi','Telugu','Tamil','Kannada','Malayalam'].map(name=>{const button=node('quick-'+name,'button',parameters);button.className='quick-language';button.dataset.language=name;return button;});
+const allPlatforms=node('quick-platform-all','button',parameters),allLanguages=node('quick-language-all','button',parameters);
+const platformStatus=node('quick-platform-status','span',parameters),languageStatus=node('quick-language-status','span',parameters);
 const input = node('platform-checkbox', 'input', menus[0]);
 const reset = node('reset-filters', 'button', parameters);
 const done = node('filters-done', 'button', parameters);
@@ -173,7 +175,7 @@ run(`
 renderGenres=()=>{};renderOriginals=()=>{};updateSelections=()=>{};render=()=>activeFilterChips();
 activeFilterChips();
 `);
-assert.equal(badge.hidden, true, 'Search, view and media type must not count as the seven parameter groups');
+assert.equal(badge.hidden, false);assert.equal(badge.textContent,'All selected','Search, view and media type must not count as the seven parameter groups');
 assert.equal(chips.children.length, 0);
 run(`
 selectedPlatforms.clear();selectedPlatforms.add('Netflix');
@@ -191,7 +193,7 @@ assert.equal(run('selectedPlatforms.size'), 1);
 assert.equal(badge.textContent, '6 active');
 assert.equal(document.activeElement, chips.children[2], 'Removing a middle chip must focus its remaining neighbour');
 while (chips.children.length) { chips.children[0].focus(); chips.children[0].onclick(); }
-assert.equal(badge.hidden, true); assert.equal(badge.textContent, '0 active');
+assert.equal(badge.hidden, false); assert.equal(badge.textContent, 'All selected');
 assert.equal(document.activeElement, summary, 'Last chip removal must focus visible Filters, not hidden Reset');
 assert.equal(search.value, 'Drive', 'Removing parameter chips erased the independent search');
 assert.equal(run('saved.has("motn:42")'), true, 'Removing parameter chips erased the watchlist');
@@ -228,13 +230,13 @@ assert.equal(chips.children[0].textContent, 'Additions: Older movies ×');
 for (const view of ['discover','watchlist']) {
   context.testView=view;run('view=testView;activeFilterChips()');
   assert.equal(chips.children.length, 0, 'Inactive weekly selection must not add a chip in '+view);
-  assert.equal(badge.hidden, true);
+  assert.equal(badge.hidden, false);assert.equal(badge.textContent,'All selected');
   assert.equal(run('weeklyKind'), 'older', 'Changing views must retain the weekly selection');
 }
 run(`view='weekly';activeFilterChips()`);
 chips.children[0].onclick();
 assert.equal(run('weeklyKind'), 'all');
-assert.equal(chips.children.length, 0); assert.equal(badge.hidden, true);
+assert.equal(chips.children.length, 0); assert.equal(badge.hidden, false);assert.equal(badge.textContent,'All selected');
 assert.equal(document.activeElement, summary);
 for (const button of weeklyGroup.children) assert.equal(button.attributes['aria-pressed'], String(button.dataset.kind==='all'));
 run(`
@@ -340,7 +342,7 @@ console.log('In-feed advertisement remains bounded and in its existing position 
 
 run(`
 updateSelections=updateSelectionsReal;
-selectedPlatforms.clear();platforms.forEach(name=>selectedPlatforms.add(name));
+selectedPlatforms.clear();selectedPlatforms.add('Netflix');selectedPlatforms.add('Prime Video');
 selectedLanguages.clear();languages.forEach(name=>selectedLanguages.add(name));
 liveCatalog={missingPlatforms:[],recentHistoryComplete:true};view='discover';$('#search').value='';selectedSearchId=null;
 titles=[{...cardFixture,id:'quick-en',title:'English film'},
@@ -349,22 +351,49 @@ setupQuickFilters();render();
 `);
 assert.equal(quickPlatforms[2].hidden,true,'Unsupported platform must not appear in the quick choices');
 assert.equal(quickPlatforms[2].disabled,true);
+assert.equal(platformStatus.textContent,'All 2 selected');assert.equal(allPlatforms.attributes['aria-pressed'],'true');
 quickPlatforms[0].onclick();
-assert.equal(run('[...selectedPlatforms].join()'),'Netflix','Choosing a platform from All must isolate it');
-assert.equal(quickPlatforms[0].attributes['aria-pressed'],'true');
-assert.equal(quickPlatforms[1].attributes['aria-pressed'],'false');
-assert.equal(ids.get('#platforms').children[0].checked,true);
-assert.equal(ids.get('#platforms').children[1].checked,false,'Quick choice must sync checkbox controls');
-quickPlatforms[1].onclick();
-assert.equal(run('selectedPlatforms.has("Netflix")&&selectedPlatforms.has("Prime Video")'),true,'Quick platforms must allow multiple choices');
+assert.equal(run('[...selectedPlatforms].join()'),'Prime Video','Deselecting Netflix from All must retain the other platforms');
+assert.equal(quickPlatforms[0].attributes['aria-pressed'],'false');
+assert.equal(quickPlatforms[1].attributes['aria-pressed'],'true');
+assert.equal(ids.get('#platforms').children[0].checked,false);
+assert.equal(ids.get('#platforms').children[1].checked,true,'Quick choice must sync checkbox controls');
+assert.equal(platformStatus.textContent,'1 of 2 selected');assert.equal(allPlatforms.attributes['aria-pressed'],'false');
+quickPlatforms[0].onclick();
+assert.equal(run('selectedPlatforms.size'),2);assert.equal(platformStatus.textContent,'All 2 selected');
+assert.ok(quickPlatforms.slice(0,2).every(button=>button.attributes['aria-pressed']==='true'),'Both platform indicators must remain pressed after choosing all');
+quickPlatforms[0].onclick();quickPlatforms[1].onclick();
+assert.equal(platformStatus.textContent,'None selected');assert.equal(allPlatforms.attributes['aria-pressed'],'false');
+assert.equal(run('selectedPlatforms.size'),0);
+allPlatforms.onclick();
+assert.equal(platformStatus.textContent,'All 2 selected');assert.equal(run('selectedPlatforms.size'),2);
+assert.equal(stored.get('ottscout-platforms'),'["Netflix","Prime Video"]');
+assert.equal(languageStatus.textContent,'All 6 selected');assert.equal(allLanguages.attributes['aria-pressed'],'true');
 quickLanguages[1].onclick();
-assert.equal(run('[...selectedLanguages].join()'),'Hindi','Choosing a language from All must isolate it');
-assert.equal(quickLanguages[1].attributes['aria-pressed'],'true');
-assert.equal(ids.get('#languages').children[1].checked,true);
-assert.equal(ids.get('#languages').children[0].checked,false);
-quickLanguages[0].onclick();assert.equal(run('selectedLanguages.size'),2);
-quickLanguages[0].onclick();assert.equal(run('[...selectedLanguages].join()'),'Hindi');
-assert.equal(stored.get('ottscout-languages'),'["Hindi"]');
+assert.equal(run('selectedLanguages.size'),5,'Deselecting Hindi from All must preserve the other five languages');
+assert.equal(quickLanguages[1].attributes['aria-pressed'],'false');
+assert.equal(ids.get('#languages').children[1].checked,false);
+assert.equal(ids.get('#languages').children[0].checked,true);
+assert.equal(languageStatus.textContent,'5 of 6 selected');assert.equal(allLanguages.attributes['aria-pressed'],'false');
+function restoredQuickState(){
+  const persisted=vm.createContext({document,console,Intl,URL,localStorage:{getItem:key=>stored.get(key)||null},restoredData:JSON.parse(run('JSON.stringify({titles,liveCatalog})'))});
+  vm.runInContext(source,persisted);vm.runInContext('titles=restoredData.titles;liveCatalog=restoredData.liveCatalog;syncQuickFilters()',persisted);return persisted;
+}
+let restoredQuick=restoredQuickState();
+assert.equal(vm.runInContext('selectedLanguages.size',restoredQuick),5);assert.equal(languageStatus.textContent,'5 of 6 selected');
+assert.equal(quickLanguages[1].attributes['aria-pressed'],'false','Reloading partial saved choices must retain pressed states');
+quickLanguages[1].onclick();
+assert.equal(languageStatus.textContent,'All 6 selected');
+assert.ok(quickLanguages.every(button=>button.attributes['aria-pressed']==='true'),'All six language indicators must remain pressed');
+quickLanguages.forEach(button=>button.onclick());
+assert.equal(languageStatus.textContent,'None selected');assert.equal(run('selectedLanguages.size'),0);
+restoredQuick=restoredQuickState();assert.equal(vm.runInContext('selectedLanguages.size',restoredQuick),0);assert.equal(languageStatus.textContent,'None selected');
+allLanguages.onclick();
+assert.equal(languageStatus.textContent,'All 6 selected');assert.equal(allLanguages.attributes['aria-pressed'],'true');
+restoredQuick=restoredQuickState();
+assert.equal(vm.runInContext('selectedLanguages.size',restoredQuick),6);assert.equal(vm.runInContext('selectedPlatforms.size',restoredQuick),2);
+assert.ok(quickLanguages.every(button=>button.attributes['aria-pressed']==='true'));assert.equal(platformStatus.textContent,'All 2 selected');
+assert.equal(badge.textContent,'All selected');assert.equal(badge.hidden,false);
 assert.equal(run('saved.has("motn:42")'),true,'Quick filters must not change saved titles');
 
 run(`
@@ -456,5 +485,46 @@ assert.equal(document.activeElement,heading);
 run(`$('#search').value='no eligible title';selectedSearchId=null;render();`);
 assert.equal(ids.get('#pick-one').disabled,true);
 const noPickState=snapshot();run('pickRandomTitle()');assert.equal(snapshot(),noPickState);
+run(`
+view='weekly';$('#search').value='';selectedSearchId=null;contentType='all';weeklyKind='all';
+selectedPlatforms.clear();selectedPlatforms.add('Netflix');
+selectedLanguages.clear();languages.forEach(name=>selectedLanguages.add(name));
+selectedOriginals=null;selectedGenres=null;originalOnly=false;subscriptionOnly=false;audioDescriptionOnly=false;
+const contextPrime={...daily('context-prime','Hidden Prime title',newest),weeklyPlatforms:['Prime Video'],weeklyEvents:[{platform:'Prime Video',addedAt:newest}],offers:[{platform:'Prime Video',audio:['English'],type:'subscription',availableSince:newest}]};
+titles=[contextPrime,daily('context-netflix','Visible Netflix title',previous),{...contextPrime,id:'dismissed-context',title:'Never reveal dismissed title'}];
+dismissed.add('dismissed-context');weeklyOpen.clear();weeklyLimits.clear();render();
+`);
+assert.equal(catalog.children.length,2,'Platform filters must not erase a valid source date');
+let zeroDay=catalog.children[0];
+assert.equal(zeroDay.dataset.date,'2026-11-01');assert.equal(zeroDay.open,true);
+assert.equal(zeroDay.querySelector('.date-count').textContent,'0 matches');
+assert.equal(zeroDay.querySelectorAll('.card').length,0,'Context must not expose a filtered title');
+assert.equal(zeroDay.querySelector('.date-filtered').querySelector('p').textContent,'1 addition on Prime Video is hidden by your filters.');
+const allText=node=>[node.textContent,...node.children.map(allText)].join(' ');
+assert.ok(!allText(catalog).includes('Hidden Prime title'));
+assert.ok(!allText(catalog).includes('Never reveal dismissed title'));
+assert.equal(catalog.querySelectorAll('.card').length,1);
+assert.equal(catalog.querySelector('.card').dataset.titleId,'context-netflix');
+run('toggleAllDates()');
+assert.ok(catalog.children.every(group=>!group.open),'Collapse all must include zero-match context dates');
+assert.equal(toggleDates.textContent,'Expand all dates');assert.equal(document.activeElement,toggleDates);
+run('toggleAllDates()');assert.ok(catalog.children.every(group=>group.open));
+zeroDay=catalog.children[0];
+const resetZero=zeroDay.querySelector('.date-filtered').querySelector('button');
+resetZero.focus();resetZero.onclick();
+const restoredDay=catalog.children[0];
+assert.equal(restoredDay.dataset.date,'2026-11-01');assert.equal(restoredDay.open,true);
+assert.equal(restoredDay.querySelector('.date-count').textContent,'1 title');
+assert.equal(restoredDay.querySelector('.date-filtered'),null);
+assert.equal(restoredDay.querySelector('.card').dataset.titleId,'context-prime');
+assert.equal(document.activeElement,restoredDay.querySelector('summary'),'Reset must focus the restored date summary');
+assert.notEqual(document.activeElement.tabIndex,-1,'Restoring the date must not remove its summary from keyboard tab order');
+assert.equal(platformStatus.textContent,'All 2 selected');assert.equal(languageStatus.textContent,'All 6 selected');
+assert.equal(allPlatforms.attributes['aria-pressed'],'true');assert.equal(allLanguages.attributes['aria-pressed'],'true');
+assert.equal(badge.textContent,'All selected');assert.equal(badge.hidden,false);
+assert.equal(run('saved.has("expiring")'),true,'Resetting filters must keep the saved list');
+assert.equal(run('dismissed.has("dismissed-context")'),true,'Resetting filters must not unhide dismissed titles');
+run(`dismissed.add('context-prime');render()`);
+assert.ok(catalog.children.every(group=>group.dataset.date!=='2026-11-01'),'A date containing only dismissed titles must not leak back through context');
 run('Date.now=nativeNow');
-console.log('Quick filters, nested sidebar/viewport state, complete date headers, per-day paging, visible focus, Leaving soon and random-pick state scenarios passed.');
+console.log('Quick all/partial/none persistence, date-context reset/focus, nested sidebar, paging, Leaving soon and random-pick state scenarios passed.');

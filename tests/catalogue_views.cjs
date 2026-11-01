@@ -122,3 +122,74 @@ assert.equal(randomTitle([duplicateA,duplicateB],()=>1-Number.EPSILON),duplicate
 assert.equal(randomTitle([duplicateB],()=>0.7),duplicateB);
 `);
 console.log('IST weekly groups, selected-offer dates, unverified dates, strict expiry windows and random title identity scenarios passed.');
+
+run(`
+resetViewFilters();view='weekly';contentType='all';weeklyKind='all';
+liveCatalog={missingPlatforms:['ZEE5']};
+const contextNetflix=weeklyAt('context-netflix',netflixTime);
+const contextPrime=weeklyAt('context-prime',primeTime,{
+  weeklyPlatforms:['Prime Video'],weeklyEvents:[{platform:'Prime Video',addedAt:primeTime}],
+  offers:[offerAt('Prime Video',{audio:['Hindi'],type:'rent'})]
+});
+const contextCross=weeklyAt('context-cross',primeTime+7200,{
+  weeklyPlatforms:['Netflix','Prime Video'],
+  weeklyEvents:[{platform:'Netflix',addedAt:netflixTime},{platform:'Prime Video',addedAt:primeTime+7200}],
+  offers:[offerAt('Netflix'),offerAt('Prime Video',{audio:['Hindi']})]
+});
+const contextMissing=weeklyAt('context-missing',clock-100,{
+  weeklyPlatforms:['ZEE5'],weeklyEvents:[{platform:'ZEE5',addedAt:clock-100}],offers:[offerAt('ZEE5')]
+});
+const contextDismissed=weeklyAt('context-dismissed',clock-100);
+const contextOld=weeklyAt('context-old',clock-100,{offers:[offerAt('Netflix',{availableSince:clock-8*DAY})]});
+const contextFuture=weeklyAt('context-future',clock-100,{offers:[offerAt('Netflix',{availableSince:clock+1})]});
+const contextUnknown=weeklyAt('context-unknown',undefined,{weeklyEvents:[],weeklyUpdatedAt:null,firstObservedAt:clock-100});
+const contextStale=weeklyAt('context-stale',clock-8*DAY,{weeklyEvents:[{platform:'Netflix',addedAt:clock-100}]});
+const contextNotWeekly=weeklyAt('context-not-weekly',clock-100,{weekly:false});
+const contextUnknownProvider=weeklyAt('context-unknown-provider',clock-100,{
+  weeklyPlatforms:['Unsupported'],weeklyEvents:[{platform:'Unsupported',addedAt:clock-100}],offers:[offerAt('Unsupported')]
+});
+titles=[contextNetflix,contextPrime,contextCross,{...contextCross},contextMissing,contextDismissed,
+  contextOld,contextFuture,contextUnknown,contextStale,contextNotWeekly,contextUnknownProvider];
+dismissed.add(contextDismissed.id);
+selectedPlatforms.clear();selectedPlatforms.add('Netflix');
+const sourceContext=weeklyContextGroups(clock);
+assert.deepEqual(sourceContext.map(group=>group.key),['2026-11-01','2026-10-31']);
+assert.equal(sourceContext[0].label,'Sunday, 1 November');
+assert.equal(sourceContext[0].timestamp,primeTime+7200);
+assert.equal(sourceContext[0].count,2,'Duplicate source IDs cannot inflate the context count');
+assert.deepEqual(sourceContext[0].platforms,['Prime Video'],'The latest source date must name its actual platform, not the selected older offer');
+assert.equal(sourceContext[1].count,1);
+assert.deepEqual(sourceContext[1].platforms,['Netflix']);
+assert.equal(sourceContext.reduce((count,group)=>count+group.count,0),3,'Dismissed, missing-provider, old/future, unknown and nonweekly sources must not create context');
+assert.equal(selectedPlatforms.size,1);assert.ok(selectedPlatforms.has('Netflix'));
+
+selectedLanguages.clear();selectedOriginals=new Set(['Tamil']);selectedGenres=new Set(['Nonmatching genre']);
+subscriptionOnly=true;originalOnly=true;audioDescriptionOnly=true;contentType='Series';weeklyKind='other';
+selectedSearchId='not-in-the-context';visibleLimit=72;saved.add('saved-context-title');
+const contextSearch={value:'a query matching none of these titles'};
+document.querySelector=selector=>selector==='#search'?contextSearch:null;
+const contextState=()=>JSON.stringify({
+  selectedPlatforms:[...selectedPlatforms],selectedLanguages:[...selectedLanguages],
+  selectedOriginals:[...selectedOriginals],selectedGenres:[...selectedGenres],subscriptionOnly,originalOnly,
+  audioDescriptionOnly,contentType,weeklyKind,selectedSearchId,visibleLimit,view,query:contextSearch.value,
+  saved:[...saved],dismissed:[...dismissed],titles,liveCatalog
+});
+const contextBefore=contextState();
+const originalSourceTitles=titles;
+assert.deepEqual(weeklyContextGroups(clock),sourceContext,'Source context must survive even when all viewing filters and the query have zero matches');
+assert.equal(contextState(),contextBefore,'Computing source context must not mutate preferences, saved data, query or source records');
+assert.equal(titles,originalSourceTitles);
+
+const sameDayTime=primeTime+3600;
+titles=[weeklyAt('same-day-providers',sameDayTime,{
+  weeklyPlatforms:['Netflix','Prime Video'],
+  weeklyEvents:[{platform:'Netflix',addedAt:sameDayTime},{platform:'Prime Video',addedAt:primeTime}],
+  offers:[offerAt('Netflix'),offerAt('Prime Video')]
+})];
+const sameDayContext=weeklyContextGroups(clock);
+assert.equal(sameDayContext.length,1);assert.equal(sameDayContext[0].count,1);
+assert.deepEqual(sameDayContext[0].platforms.slice().sort(),['Netflix','Prime Video'],'Both providers may be named only when their valid offer dates share the chosen IST day');
+liveCatalog=null;titles=[sampleTitles[0]];
+assert.deepEqual(weeklyContextGroups(clock),[],'Sample rows cannot acquire guessed source dates');
+`);
+console.log('Unfiltered weekly source context preserves preferences, deduplicates titles and attributes only valid same-day providers.');
