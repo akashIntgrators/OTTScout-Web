@@ -22,22 +22,39 @@
 <link rel="icon" href="/favicon.ico?v=brand14" type="image/x-icon"><link rel="icon" href="/assets/ottscout-icon.svg?v=brand14" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=brand14" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=brand14"><meta name="apple-mobile-web-app-title" content="OTTScout">
   <title>OTTScout — Where to watch movies and series in India</title>
   <link rel="canonical" href="https://ottscout.techiwithhelmet.com/">
-  <link rel="stylesheet" href="style.css?v=shelf17">
+  <script src="/theme.js?v=rail21"></script>
+  <link rel="stylesheet" href="style.css?v=rail21">
 </head>
-<body>
+<body class="dashboard">
   <a class="skip-link" href="#catalog-section">Skip to titles</a>
-  <header class="site-header">
-    <a class="brand" href="./" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a>
-    <nav class="header-links" aria-label="Help and accessible viewing"><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility</a></nav><div class="header-right"><span class="region"><i></i> Streaming in India</span></div>
-  </header>
-  <main id="main" tabindex="-1">
-    <section class="discovery-panel" aria-label="Search and filters">
-      <div class="search-row"><div class="search-autocomplete"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="search-suggestions" autocomplete="off" enterkeyhint="search" placeholder="Search a movie or series…" aria-label="Search movies and series" aria-describedby="search-help"></label><div id="search-suggestions" class="search-suggestions" role="listbox" aria-label="Title suggestions" hidden></div><p id="suggestion-status" class="sr-only" role="status" aria-live="polite"></p></div>
+  <aside class="rail" aria-label="Search and filters">
+    <header class="rail-header"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><button class="theme-toggle" type="button" aria-label="Switch to light mode"><svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/></svg></button></header>
+      <div class="search-row"><div class="search-autocomplete"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" disabled role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="search-suggestions" autocomplete="off" enterkeyhint="search" placeholder="Loading titles…" aria-label="Search movies and series" aria-describedby="search-help"></label><div id="search-suggestions" class="search-suggestions" role="listbox" aria-label="Title suggestions" hidden></div><p id="suggestion-status" class="sr-only" role="status" aria-live="polite"></p></div>
         <p id="search-help" class="sr-only">Type at least two characters for suggestions. Use arrow keys and Enter to choose, or Escape to close. Results update as you type. Use Tab to reach Filters.</p>
       </div>
-      <details class="filters-panel" id="filters-panel">
-        <summary id="filters-summary"><span>Filters <span id="filter-count" class="filter-count" hidden></span></span><span class="filter-chevron" aria-hidden="true">⌄</span></summary>
-        <div class="filter-parameters">
+
+    <details class="filters-panel" id="filters-panel" open>
+      <summary id="filters-summary"><span>Filters <span id="filter-count" class="filter-count" hidden></span></span><span class="filter-chevron" aria-hidden="true">⌄</span></summary>
+      <div class="filter-parameters">
+        <section class="quick-choices" aria-labelledby="quick-language-title">
+          <h2 id="quick-language-title">Watch in</h2>
+          <div class="quick-languages" role="group" aria-label="Quick audio languages"><button class="quick-language" data-language="English" type="button" aria-label="English" aria-pressed="false"><span class="native-script" lang="en">English</span></button>
+<button class="quick-language" data-language="Hindi" type="button" aria-label="Hindi" aria-pressed="false"><span class="native-script" lang="hi">हिन्दी</span><small>Hindi</small></button>
+<button class="quick-language" data-language="Telugu" type="button" aria-label="Telugu" aria-pressed="false"><span class="native-script" lang="te">తెలుగు</span><small>Telugu</small></button>
+<button class="quick-language" data-language="Tamil" type="button" aria-label="Tamil" aria-pressed="false"><span class="native-script" lang="ta">தமிழ்</span><small>Tamil</small></button>
+<button class="quick-language" data-language="Kannada" type="button" aria-label="Kannada" aria-pressed="false"><span class="native-script" lang="kn">ಕನ್ನಡ</span><small>Kannada</small></button>
+<button class="quick-language" data-language="Malayalam" type="button" aria-label="Malayalam" aria-pressed="false"><span class="native-script" lang="ml">മലയാളം</span><small>Malayalam</small></button></div>
+        </section>
+        <section class="quick-choices" aria-labelledby="quick-platform-title">
+          <h2 id="quick-platform-title">On your platforms</h2>
+          <div class="quick-platforms" role="group" aria-label="Quick platforms"><button class="quick-platform" type="button" data-platform="Netflix" aria-label="Netflix" aria-pressed="false"><img src="/assets/platform-netflix.svg" alt="" width="86" height="44"><span class="sr-only">Netflix</span></button>
+<button class="quick-platform" type="button" data-platform="Prime Video" aria-label="Prime Video" aria-pressed="false"><img src="/assets/platform-prime.svg" alt="" width="86" height="44"><span class="sr-only">Prime Video</span></button>
+<button class="quick-platform" type="button" data-platform="JioHotstar" aria-label="JioHotstar" aria-pressed="false"><img src="/assets/platform-jiohotstar.svg" alt="" width="86" height="44"><span class="sr-only">JioHotstar</span></button>
+<button class="quick-platform" type="button" data-platform="ZEE5" aria-label="ZEE5" aria-pressed="false"><img src="/assets/platform-zee5.svg" alt="" width="86" height="44"><span class="sr-only">ZEE5</span></button>
+<button class="quick-platform" type="button" data-platform="SonyLIV" aria-label="SonyLIV" aria-pressed="false"><img src="/assets/platform-sonyliv.svg" alt="" width="86" height="44"><span class="sr-only">SonyLIV</span></button></div>
+        </section>
+        <details id="advanced-filters" class="advanced-filters">
+          <summary>More filters <span aria-hidden="true">⌄</span></summary>
           <div class="filter-menus"><details class="filter-dropdown" id="platform-menu"><summary id="platform-summary"><span>Platforms</span><small>All</small><span class="chevron" aria-hidden="true">⌄</span></summary><div class="dropdown-panel"><div class="dropdown-heading"><strong>Platforms</strong><button type="button" data-select-all="platforms" aria-label="Select all platforms">Select all</button><button type="button" data-clear="platforms" aria-label="Clear platforms">Clear</button></div><p>Show titles from the platforms you select.</p><div id="platforms" class="checkbox-list" role="group" aria-label="Platforms"></div></div></details>
           <details class="filter-dropdown" id="original-menu"><summary id="original-summary"><span>Originally</span><small>All</small><span class="chevron" aria-hidden="true">⌄</span></summary><div class="dropdown-panel"><div class="dropdown-heading"><strong>Original language</strong><button type="button" id="original-all" aria-label="Select all original languages">Select all</button><button type="button" id="original-clear" aria-label="Clear original languages">Clear</button></div><p>The title’s original language, regardless of the audio available on your platforms. Unverified originals are labelled separately.</p><div id="originals" class="checkbox-list" role="group" aria-label="Original languages"></div></div></details>
           <details class="filter-dropdown" id="language-menu"><summary id="language-summary"><span>Watch in</span><small>All</small><span class="chevron" aria-hidden="true">⌄</span></summary><div class="dropdown-panel"><div class="dropdown-heading"><strong>Watch in</strong><button type="button" data-select-all="languages" aria-label="Select all languages">Select all</button><button type="button" data-clear="languages" aria-label="Clear languages">Clear</button></div><p>Available audio on a matching platform. This can include dubbed versions.</p><div id="languages" class="checkbox-list" role="group" aria-label="Languages"></div></div></details>
@@ -49,31 +66,42 @@
             <label><input id="audio-description-only" type="checkbox" aria-labelledby="audio-description-only-label" aria-describedby="audio-description-help"><span><span id="audio-description-only-label">Audio description reported</span><small id="audio-description-help">Provider-reported narration tracks; India playback is unverified. <a href="/audio-description/">Sources and guide</a></small></span></label>
           </fieldset>
             <div id="weekly-kind" class="weekly-kind" role="group" aria-label="Weekly addition type"><span class="filter-group-label">This week</span><button type="button" data-kind="all" aria-pressed="true">All additions</button><button type="button" data-kind="older" aria-pressed="false">Older movies</button><button type="button" data-kind="other" aria-pressed="false">Other additions</button></div>
-          <div class="filter-status"><span id="selection-status" class="sr-only">All platforms · All six languages</span><button id="restore-hidden" type="button" hidden>Restore hidden titles</button><button id="reset-filters" type="button">Reset filters</button><button id="filters-done" type="button">Show titles</button></div>
-        </div>
-      </details>
-      <div id="active-filters" class="active-filters" role="group" aria-label="Active filters"></div>
-    </section>
+
+        </details>
+          <div class="filter-status"><span id="selection-status">All platforms · All six languages</span><button id="restore-hidden" type="button" hidden>Restore hidden titles</button><button id="reset-filters" type="button">Reset filters</button><button id="filters-done" type="button">Show titles</button></div>
+
+      </div>
+    </details>
+    <p class="rail-note">Streaming in India</p>
+    <nav class="rail-links" aria-label="Help and accessible viewing"><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility</a></nav>
+  </aside>
+  <div class="content">
+  <main id="main" tabindex="-1">
     <div class="notice" id="catalog-status" hidden></div>
-    <section id="catalog-section" tabindex="-1" aria-labelledby="heading" class="catalog-section">
-        <div class="browse-toolbar"><nav class="view-tabs" aria-label="Catalog views"><button class="active" data-view="weekly" type="button" aria-current="page">This week <span id="weekly-count">0</span></button><button data-view="discover" type="button">Discover</button><button data-view="watchlist" type="button">Watchlist <span id="count">0</span></button></nav><div id="type" class="type-toggle" role="group" aria-label="Content type"><button type="button" data-type="all" aria-pressed="true">All</button><button type="button" data-type="Movie" aria-pressed="false">Movies</button><button type="button" data-type="Series" aria-pressed="false">Series</button></div></div>
-        <div class="section-title"><div><h1 id="heading" tabindex="-1">Added this week</h1><p id="description">Movies and series across your selected platforms.</p></div><span id="result-count"></span></div>
+    <section id="catalog-section" tabindex="-1" aria-labelledby="heading" class="catalog-section" data-ready="false">
+        <div id="active-filters" class="active-filters" role="group" aria-label="Active filters"></div>
+        <div class="browse-toolbar"><nav class="view-tabs" aria-label="Catalog views"><button class="active" data-view="weekly" type="button" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg>New this week <span id="weekly-count">0</span></button><button data-view="discover" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>All titles</button><button data-view="leaving" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>Leaving soon <span id="leaving-count">0</span></button><button data-view="watchlist" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4Z"/></svg>Saved <span id="count">0</span></button></nav><div class="content-controls"><div id="type" class="type-toggle" role="group" aria-label="Content type"><button type="button" data-type="all" aria-pressed="true">All</button><button type="button" data-type="Movie" aria-pressed="false">Movies</button><button type="button" data-type="Series" aria-pressed="false">Series</button></div><button id="pick-one" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01"/></svg>Pick one for me</button></div></div>
+        <div class="section-title"><div><h1 id="heading" tabindex="-1">Added this week</h1><p id="description">Movies and series across your selected platforms.</p></div><div class="section-actions"><span id="result-count"></span><button id="toggle-dates" type="button" aria-controls="catalog" hidden>Collapse all dates</button></div></div>
 
       <div class="catalog-layout">
       <div class="catalog-main">
-        <p id="results-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p><div id="catalog" class="grid" role="group" aria-label="Movie and series results"></div>
+        <p id="catalog-loading" class="loading-state" role="status">Loading the India catalogue…</p>
+        <p id="results-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p><div id="catalog" class="catalog-results" role="group" aria-label="Movie and series results"></div>
         <div class="load-more-wrap"><button id="load-more" type="button" hidden>Show more titles</button></div>
       </div>
-      <aside class="sidebar" aria-label="Advertisement"><div class="ad-slot ad-rectangle" role="region" aria-label="Reserved advertisement space"><span class="ad-label">Advertisement</span></div></aside>
+
       </div>
     </section>
     <aside class="ad-slot ad-banner" aria-label="Reserved banner advertisement space"><span class="ad-label">Advertisement</span></aside>
-    <nav class="seo-nav" aria-label="More streaming guides"><a href="/this-week/">Weekly OTT additions</a><a href="/languages/english/">English</a><a href="/languages/hindi/">Hindi</a><a href="/languages/telugu/">Telugu</a><a href="/languages/tamil/">Tamil</a><a href="/languages/kannada/">Kannada</a><a href="/languages/malayalam/">Malayalam</a></nav><section class="credits" aria-label="Data credits"><h2>Data credits</h2><a href="https://www.themoviedb.org"><img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg" width="56" height="40" alt="TMDB"></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p><p>TMDB supplies matched original-language and genre metadata. Streaming availability and audio options are supplied by Movie of the Night.</p></section><nav class="seo-nav" aria-label="About OTTScout"><a href="/guides/telugu-weekend-picks/">Weekend picks: five Telugu films</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility</a><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a></nav></main>
+    <nav class="seo-nav" aria-label="More streaming guides"><a href="/this-week/">Weekly OTT additions</a><a href="/languages/english/">English</a><a href="/languages/hindi/">Hindi</a><a href="/languages/telugu/">Telugu</a><a href="/languages/tamil/">Tamil</a><a href="/languages/kannada/">Kannada</a><a href="/languages/malayalam/">Malayalam</a></nav><section class="credits" aria-label="Data credits"><h2>Data credits</h2><a href="https://www.themoviedb.org"><img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg" width="56" height="40" alt="TMDB"></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p><p>TMDB supplies matched original-language and genre metadata. Streaming availability and audio options are supplied by Movie of the Night.</p></section><nav class="seo-nav" aria-label="About OTTScout"><a href="/guides/telugu-weekend-picks/">Weekend picks: five Telugu films</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility</a><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a></nav>
+  </main>
   <footer><a class="brand" href="./" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><p>Find it. Track it. Watch it.</p><div><a id="attribution" href="https://www.movieofthenight.com/about/api" target="_blank" rel="noopener noreferrer">Streaming data by Movie of the Night</a><span>India · Availability may change</span></div></footer>
   <section id="accessibility-options" class="accessibility-options" aria-labelledby="accessibility-options-title"><h2 id="accessibility-options-title">Keyboard options</h2><label><input id="enable-shortcuts" type="checkbox" aria-describedby="shortcuts-help"> Enable the / search shortcut</label><p id="shortcuts-help">Off by default to avoid interfering with screen-reader and speech commands. You can always use Tab to reach search.</p><a href="/accessibility/">Accessibility help and feedback</a></section>
   <noscript><p>JavaScript is needed for dashboard filters and watchlists. Browse the <a href="/this-week/">text weekly feed</a>, <a href="/languages/telugu/">language pages</a> or <a href="/audio-description/">audio-description guide</a> without it.</p></noscript>
+
+  </div>
   <dialog id="report-dialog" aria-labelledby="report-title" aria-describedby="report-help"><div class="report-header"><h2 id="report-title">Report incorrect details</h2><button id="report-close" type="button" aria-label="Close report">×</button></div><p id="report-help">Tell us what needs correcting. Reports opened on GitHub are public and require a GitHub account; you can review before submitting. You can also copy the report.</p><label>What is incorrect?<select id="report-category" autofocus><option>Original language</option><option>Available audio</option><option>Audio description</option><option>Platform availability</option><option>Subscription or rental details</option><option>Genre</option><option>Other</option></select></label><label>Platform<select id="report-platform"></select></label><label>Correction and source (optional)<textarea id="report-correction" rows="3" maxlength="1000" placeholder="What did you find on the platform? A source link helps."></textarea></label><details><summary>Preview report</summary><textarea id="report-preview" rows="8" readonly aria-label="Report preview"></textarea></details><div class="report-actions"><button type="button" id="report-copy">Copy report</button><a id="report-github" target="_blank" rel="noopener noreferrer">Review on GitHub ↗</a></div><p id="report-feedback" role="status"></p></dialog>
-  <script src="app.js?v=shelf17"></script>
+  <script src="app.js?v=rail21"></script>
   <script src="/analytics.js?v=2" defer></script>
 </body>
 </html>
