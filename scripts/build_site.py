@@ -70,7 +70,7 @@ def build(root=ROOT, now=None):
     reports = valid_reports(report_file['reports'],now)
     homepage = target / 'index.html'
     homepage.write_text(homepage.read_text().replace('<!-- SEO:STRUCTURED_DATA -->', json_script(schema_graph('/', 'OTTScout — Where to watch movies and series in India', 'Compare OTT platforms, audio languages and sourced audio-description reports in India.'))))
-    theme_script = '<script src="/theme.js?v=rail21"></script>' if (root / 'theme.js').exists() else ''
+    theme_script = '<script src="/theme.js?v=rail22"></script>' if (root / 'theme.js').exists() else ''
     urls = ['/']
     navigation = '<a href="/">Dashboard</a><a href="/this-week/">This week</a>' + ''.join(f'<a href="/languages/{lang.lower()}/">{lang}</a>' for lang in LANGUAGES)
     navigation += '<a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a>'
@@ -86,7 +86,7 @@ def build(root=ROOT, now=None):
 <meta property="og:image" content="{BASE}/assets/ottscout-social.png?v=brand14"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="OTTScout — Find it. Save it. Watch it.">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="{BASE}/assets/ottscout-social.png?v=brand14"><meta name="twitter:image:alt" content="OTTScout — Find it. Save it. Watch it.">
 <link rel="icon" href="/favicon.ico?v=brand14" type="image/x-icon"><link rel="icon" href="/assets/ottscout-icon.svg?v=brand14" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=brand14" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=brand14"><meta name="apple-mobile-web-app-title" content="OTTScout">
-{structured}{theme_script}<link rel="stylesheet" href="/style.css?v=rail21"></head><body>
+{structured}{theme_script}<link rel="stylesheet" href="/style.css?v=rail22"></head><body>
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="site-header"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><span class="region">Streaming in India</span><button class="theme-toggle" type="button" aria-label="Switch to light mode"><span class="sun-icon" aria-hidden="true">☼</span><span class="moon-icon" aria-hidden="true">◐</span></button></header>
 <nav class="seo-nav seo-navigation" aria-label="Browse streaming">{navigation}</nav><main id="main" class="seo-page" tabindex="-1">
