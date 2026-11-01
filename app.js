@@ -197,7 +197,7 @@ function cardFor(title) {
     poster.append(image);
   }
   poster.append(fallback, element('span', title.type + (liveCatalog ? '' : ' · Sample'), 'badge'));
-  const save = element('button', saved.has(title.id) ? '✓' : '+', 'save');
+  const save = element('button', saved.has(title.id) ? '✓' : '+', 'save'); // taste-skill-ignore: checked state, paired with aria-pressed.
   save.type = 'button';
   save.setAttribute('aria-label', `${saved.has(title.id) ? 'Remove from' : 'Add to'} watchlist: ${title.title}`);
   save.setAttribute('aria-pressed', saved.has(title.id));
@@ -208,7 +208,7 @@ function cardFor(title) {
     // Preserve focus when a saved card remains visible.
     if (view === 'watchlist') { render();focusTitle(next); }
     else {
-      save.textContent = saved.has(title.id) ? '✓' : '+';
+      save.textContent = saved.has(title.id) ? '✓' : '+'; // taste-skill-ignore: checked state, paired with aria-pressed.
       save.setAttribute('aria-pressed', saved.has(title.id));
       save.setAttribute('aria-label', `${saved.has(title.id) ? 'Remove from' : 'Add to'} watchlist: ${title.title}`);
       $('#count').textContent = saved.size;
@@ -218,7 +218,7 @@ function cardFor(title) {
   poster.append(save);
   const body = element('div', undefined, 'card-body');
   const audio = [...new Set(offers.flatMap(offer => audioDescriptionOnly ? descriptionLanguages(offer,title) : offer.audio))];
-  const heading = element('h3', undefined, 'card-title');
+  const heading = element('h2', undefined, 'card-title');
   heading.id=titleDomId(title.id);
   const name = element(liveCatalog ? 'a' : 'span', title.title);
   if (liveCatalog) name.href = '/titles/' + encodeURIComponent(title.id.replace(/^motn:/, '')) + '/';
@@ -226,38 +226,36 @@ function cardFor(title) {
   heading.append(name, document.createTextNode(' '), element('span', audioLabel, 'card-languages'));
   const rental=rentalLabel(offers);
   if (rental) heading.append(document.createTextNode(' '),element('span',rental,'rental-label'));
-  body.append(heading, element('div', 'Original language: ' + formatLanguages(title.originalLanguage ? [title.originalLanguage] : []), 'original-language'));
+  body.append(heading);
   const reported=[...new Set(offers.flatMap(offer=>descriptionReport(offer)?.languages || []))];
   if (liveCatalog && reported.length) body.append(element('p','Audio description reported: '+formatLanguages(reported),'ad-report'));
   if (liveCatalog && view === 'weekly') {
     const added = Math.max(...offers.map(offer => weeklyOfferDate(title, offer) || 0));
     body.append(element('p', `${additionLabel(title)} · Added ${checkedDate(added)}`, 'addition-label'));
   }
+  const options = element('details', undefined, 'watch-options');
+  const summary=element('summary','Where to watch');summary.append(element('span',' '+title.title,'sr-only'));options.append(summary);
+  options.append(element('div', 'Original language: ' + formatLanguages(title.originalLanguage ? [title.originalLanguage] : []), 'original-language'));
+  offers.forEach(offer => options.append(offerBody(offer,false,title.title)));
+  if (liveCatalog) { const details=element('a','Full title details','provider');details.href='/titles/'+encodeURIComponent(title.id.replace(/^motn:/,''))+'/';options.append(details); }
+  const report = element('button','Report incorrect details','report-button');
+  report.type='button';report.setAttribute('aria-label','Report incorrect details for '+title.title); report.onclick=()=>openReport(title); options.append(report);
   if (view !== 'watchlist') {
     const dismiss = element('button', 'Hide title', 'dismiss-title');
     dismiss.type = 'button';
     dismiss.setAttribute('aria-label', 'Hide title: ' + title.title);
     dismiss.onclick = () => { const next=nextCardId(title.id);dismissed.add(title.id); persist('ottscout-dismissed', dismissed); render();focusTitle(next); };
-    body.append(dismiss);
+    options.append(dismiss);
   }
-  const options = element('details', undefined, 'watch-options');
-  const summary=element('summary','Where to watch');summary.append(element('span',' '+title.title,'sr-only'));options.append(summary);
-  offers.forEach(offer => options.append(offerBody(offer,false,title.title)));
-  if (liveCatalog) { const details=element('a','Full title details','provider');details.href='/titles/'+encodeURIComponent(title.id.replace(/^motn:/,''))+'/';options.append(details); }
-  const report = element('button','Report incorrect details','report-button');
-  report.type='button';report.setAttribute('aria-label','Report incorrect details for '+title.title); report.onclick=()=>openReport(title); options.append(report);
+  if (liveCatalog) options.append(element('p', `Availability checked ${checkedDate(title.lastCheckedAt)}`, 'checked-date'));
   body.append(options);
-  if (liveCatalog) body.append(element('p', `Availability checked ${checkedDate(title.lastCheckedAt)}`, 'checked-date'));
   card.append(poster, body);
   return card;
 }
 function adSlot() {
   const slot = element('aside', undefined, 'ad-slot ad-infeed');
   slot.setAttribute('aria-label','Reserved in-feed advertisement space');
-  slot.append(element('span','ADVERTISEMENT','ad-label'));
-  const copy = element('div', undefined, 'ad-placeholder');
-  copy.append(element('span','Your ad here'), element('small','In-feed placement'));
-  slot.append(copy);
+  slot.append(element('span','Advertisement','ad-label'));
   return slot;
 }
 function titleGenres(title) {
@@ -297,16 +295,30 @@ function renderOriginals() {
 }
 function activeFilterChips() {
   const chips=[];
-  function chip(label,reset){const button=element('button',label+' ×','filter-chip');button.type='button';button.setAttribute('aria-label','Remove filter: '+label);button.onclick=()=>{reset();visibleLimit=PAGE_SIZE;updateSelections();renderGenres();renderOriginals();render();$('#reset-filters').focus();};chips.push(button);}
+  function chip(label,reset){
+    const index=chips.length;
+    const button=element('button',label+' ×','filter-chip');
+    button.type='button';button.setAttribute('aria-label','Remove filter: '+label);
+    button.onclick=()=>{
+      reset();visibleLimit=PAGE_SIZE;updateSelections();renderGenres();renderOriginals();render();
+      const remaining=$('#active-filters').querySelectorAll('button');
+      const fallback=$('#filters-panel')?.open?$('#reset-filters'):$('#filters-summary');
+      (remaining[Math.min(index,remaining.length-1)]||fallback||$('#reset-filters')).focus();
+    };
+    chips.push(button);
+  }
   const brief=items=>items.length ? items.slice(0,2).join(', ')+(items.length>2?` +${items.length-2}`:''):'None';
   if(selectedPlatforms.size!==availablePlatforms().length)chip('Platforms: '+brief([...selectedPlatforms]),()=>{selectedPlatforms.clear();availablePlatforms().forEach(x=>selectedPlatforms.add(x));persist('ottscout-platforms',selectedPlatforms);});
   if(selectedLanguages.size!==languages.length)chip('Watch in: '+brief([...selectedLanguages]),()=>{selectedLanguages.clear();languages.forEach(x=>selectedLanguages.add(x));persist('ottscout-languages',selectedLanguages);});
   if(selectedOriginals!==null)chip('Originally: '+brief([...selectedOriginals]),()=>{selectedOriginals=null;persist('ottscout-originals',['*']);});
   if(selectedGenres!==null)chip('Genres: '+brief([...selectedGenres]),()=>{selectedGenres=null;persist('ottscout-genres',['*']);});
+  if(view==='weekly'&&weeklyKind!=='all')chip('Additions: '+(weeklyKind==='older'?'Older movies':'Other additions'),()=>{weeklyKind='all';document.querySelectorAll('#weekly-kind button').forEach(button=>button.setAttribute('aria-pressed',button.dataset.kind==='all'));});
   if(subscriptionOnly)chip('Included with subscription',()=>{subscriptionOnly=false;$('#subscription-only').checked=false;persist('ottscout-subscription-only',[false]);});
   if(originalOnly)chip('Original audio only',()=>{originalOnly=false;$('#original-only').checked=false;persist('ottscout-original-only',[false]);});
   if(audioDescriptionOnly)chip('Audio description reported',()=>{audioDescriptionOnly=false;$('#audio-description-only').checked=false;persist('ottscout-audio-description',[false]);});
   $('#active-filters').replaceChildren(...chips);
+  const count=$('#filter-count');
+  if(count){count.textContent=`${chips.length} active`;count.hidden=chips.length===0;}
 }
 function reportText(title, category, platform, correction) {
   const offers=(title.offers||[]).filter(o=>platform==='All listed platforms'||o.platform===platform);
@@ -385,7 +397,7 @@ function emptyState() {
     heading = 'No additions match your filters';
     message = liveCatalog?.recentHistoryComplete ? 'No provider-reported additions match this search in the last seven days. You can still explore the full catalog.' : 'We’re filling in the last seven days of streaming additions. Explore the catalog while that history loads.';
   }
-  node.append(element('h3',heading),element('p',message));
+  node.append(element('h2',heading),element('p',message));
   const action = element('button',view === 'discover' ? 'Reset filters' : 'Explore all titles');
   action.type='button'; action.onclick=()=>{ if(view==='discover') resetFilters(); else { $('#search').value=''; setView('discover'); } };
   node.append(action);
@@ -466,11 +478,11 @@ function render() {
   $('#restore-hidden').textContent = `Restore hidden titles (${dismissed.size})`;
   $('#weekly-count').textContent = titles.filter(title => matchingGenres(title) && !dismissed.has(title.id) && weeklyTitle(title) && matchingOffers(title,true).length).length;
   $('#weekly-kind').hidden = view !== 'weekly';
-  $('#heading').textContent = {discover:'Find your next favourite',weekly:'Added this week',watchlist:'Saved for a good night in'}[view];
-  $('#view-eyebrow').textContent = {discover:'A LITTLE DISCOVERY',weekly:'THE LAST SEVEN DAYS',watchlist:'YOUR PERSONAL PICKS'}[view];
-  $('#description').textContent = view === 'weekly' ? liveCatalog ? 'Provider-reported additions, including older movies and series updates. OTT premiere dates are not verified; a series addition does not confirm a new season.' : 'Illustrative weekly picks from the sample catalog.'
-    : view === 'watchlist' ? 'Your watchlist is saved on this browser. Filters apply here too.'
-      : liveCatalog ? 'Movies and series across your selected platforms. Audio is listed per platform.' : 'Explore the sample catalog while live data is unavailable.';
+  $('#heading').textContent = {discover:'Discover',weekly:'Added this week',watchlist:'Watchlist'}[view];
+  $('#description').hidden=Boolean(liveCatalog)&&view!=='weekly';
+  $('#description').textContent = view === 'weekly' ? liveCatalog ? 'Platform additions · Premiere dates unverified.' : 'Illustrative weekly picks from the sample catalog.'
+    : view === 'watchlist' ? 'Your saved titles.'
+      : liveCatalog ? 'Movies and series matching your filters.' : 'Explore the sample catalog while live data is unavailable.';
   $('#result-count').textContent = `${found.length} ${found.length === 1 ? 'title' : 'titles'}`;
   const content = [];
   const adAfter = window.matchMedia('(max-width:650px)').matches ? 6 : 12;
@@ -493,6 +505,31 @@ function resetFilters() {
   document.querySelectorAll('#weekly-kind button').forEach(button=>button.setAttribute('aria-pressed',button.dataset.kind==='all'));
   document.querySelectorAll('#type button').forEach(button=>button.setAttribute('aria-pressed',button.dataset.type==='all'));
   updateSelections(); render();
+}
+function setupFilterPanel(menus) {
+  const panel=$('#filters-panel');
+  if(!panel)return;
+  const summary=$('#filters-summary');
+  const closeChildren=()=>menus.forEach(menu=>{menu.open=false;});
+  panel.open=false;
+  closeChildren();
+  panel.addEventListener('toggle',event=>{
+    if(event.target!==panel)return;
+    if(panel.open){$('#search').blur();closeSuggestions();return;}
+    closeChildren();
+    if(panel.contains(document.activeElement)&&document.activeElement!==summary)summary.focus();
+  });
+  $('#filters-done').onclick=()=>{panel.open=false;closeChildren();$('#heading').focus();};
+}
+function handleGlobalKeydown(event,menus) {
+  if(event.defaultPrevented)return;
+  if(shortcutsEnabled && event.key==='/'&&!event.altKey&&!event.ctrlKey&&!event.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable && !$('#report-dialog').open){event.preventDefault();$('#search').focus();}
+  if($('#report-dialog').open)return;
+  if(event.key!=='Escape')return;
+  const child=menus.find(menu=>menu.open);
+  if(child){event.preventDefault();child.open=false;child.querySelector('summary').focus();return;}
+  const panel=$('#filters-panel');
+  if(panel?.open){event.preventDefault();panel.open=false;$('#filters-summary').focus();}
 }
 for (const kind of ['platforms','languages']) renderOptions(kind);
 if(new URL(window.location.href).searchParams.get('audio-description')==='reported'){audioDescriptionOnly=true;view='discover';}
@@ -538,13 +575,10 @@ document.querySelectorAll('#type button').forEach(button=>button.onclick=()=>{
 });
 document.querySelectorAll('.view-tabs button').forEach(button=>button.onclick=()=>setView(button.dataset.view,true));
 const menus=[$('#platform-menu'),$('#language-menu'),$('#original-menu'),$('#genre-menu')];
-menus.forEach(menu=>menu.addEventListener('toggle',()=>{if(menu.open)menus.filter(other=>other!==menu).forEach(other=>{other.open=false;});}));
+setupFilterPanel(menus);
+menus.forEach(menu=>menu.addEventListener('toggle',()=>{if(menu.open){if($('#filters-panel')&&!$('#filters-panel').open){menu.open=false;return;}menus.filter(other=>other!==menu).forEach(other=>{other.open=false;});}}));
 document.addEventListener('click',event=>menus.forEach(menu=>{if(!menu.contains(event.target))menu.open=false;}));
-document.addEventListener('keydown',event=>{
-  if(shortcutsEnabled && event.key==='/'&&!event.altKey&&!event.ctrlKey&&!event.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable && !$('#report-dialog').open){event.preventDefault();$('#search').focus();}
-  if($('#report-dialog').open)return;
-  if(event.key==='Escape'){const open=menus.find(menu=>menu.open);if(open){open.open=false;open.querySelector('summary').focus();}}
-});
+document.addEventListener('keydown',event=>handleGlobalKeydown(event,menus));
 setView(view);
 
 async function loadCatalog() {
