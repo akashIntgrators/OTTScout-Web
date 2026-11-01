@@ -8,3 +8,6 @@ class BrowserFilterTests(unittest.TestCase):
 
     def test_analytics_consent(self):
         subprocess.run(['node', 'tests/analytics_consent.cjs'], cwd=Path(__file__).resolve().parents[1], check=True)
+
+    def test_filter_disclosure(self):
+        subprocess.run(['node', 'tests/filter_disclosure.cjs'], cwd=Path(__file__).resolve().parents[1], check=True)
