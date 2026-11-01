@@ -22,8 +22,8 @@
 <link rel="icon" href="/favicon.ico?v=brand14" type="image/x-icon"><link rel="icon" href="/assets/ottscout-icon.svg?v=brand14" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=brand14" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=brand14"><meta name="apple-mobile-web-app-title" content="OTTScout">
   <title>OTTScout — Where to watch movies and series in India</title>
   <link rel="canonical" href="https://ottscout.techiwithhelmet.com/">
-  <script src="/theme.js?v=rail21"></script>
-  <link rel="stylesheet" href="style.css?v=rail21">
+  <script src="/theme.js?v=rail22"></script>
+  <link rel="stylesheet" href="style.css?v=rail22">
 </head>
 <body class="dashboard">
   <a class="skip-link" href="#catalog-section">Skip to titles</a>
@@ -37,7 +37,7 @@
       <summary id="filters-summary"><span>Filters <span id="filter-count" class="filter-count" hidden></span></span><span class="filter-chevron" aria-hidden="true">⌄</span></summary>
       <div class="filter-parameters">
         <section class="quick-choices" aria-labelledby="quick-language-title">
-          <h2 id="quick-language-title">Watch in</h2>
+          <div class="quick-heading"><h2 id="quick-language-title">Watch in<small id="quick-language-status">All 6 selected</small></h2><button id="quick-language-all" type="button" aria-label="Select all audio languages" aria-pressed="true">All</button></div>
           <div class="quick-languages" role="group" aria-label="Quick audio languages"><button class="quick-language" data-language="English" type="button" aria-label="English" aria-pressed="false"><span class="native-script" lang="en">English</span></button>
 <button class="quick-language" data-language="Hindi" type="button" aria-label="Hindi" aria-pressed="false"><span class="native-script" lang="hi">हिन्दी</span><small>Hindi</small></button>
 <button class="quick-language" data-language="Telugu" type="button" aria-label="Telugu" aria-pressed="false"><span class="native-script" lang="te">తెలుగు</span><small>Telugu</small></button>
@@ -46,7 +46,7 @@
 <button class="quick-language" data-language="Malayalam" type="button" aria-label="Malayalam" aria-pressed="false"><span class="native-script" lang="ml">മലയാളം</span><small>Malayalam</small></button></div>
         </section>
         <section class="quick-choices" aria-labelledby="quick-platform-title">
-          <h2 id="quick-platform-title">On your platforms</h2>
+          <div class="quick-heading"><h2 id="quick-platform-title">On your platforms<small id="quick-platform-status">All selected</small></h2><button id="quick-platform-all" type="button" aria-label="Select all available platforms" aria-pressed="true">All</button></div>
           <div class="quick-platforms" role="group" aria-label="Quick platforms"><button class="quick-platform" type="button" data-platform="Netflix" aria-label="Netflix" aria-pressed="false"><img src="/assets/platform-netflix.svg" alt="" width="86" height="44"><span class="sr-only">Netflix</span></button>
 <button class="quick-platform" type="button" data-platform="Prime Video" aria-label="Prime Video" aria-pressed="false"><img src="/assets/platform-prime.svg" alt="" width="86" height="44"><span class="sr-only">Prime Video</span></button>
 <button class="quick-platform" type="button" data-platform="JioHotstar" aria-label="JioHotstar" aria-pressed="false"><img src="/assets/platform-jiohotstar.svg" alt="" width="86" height="44"><span class="sr-only">JioHotstar</span></button>
@@ -101,7 +101,7 @@
 
   </div>
   <dialog id="report-dialog" aria-labelledby="report-title" aria-describedby="report-help"><div class="report-header"><h2 id="report-title">Report incorrect details</h2><button id="report-close" type="button" aria-label="Close report">×</button></div><p id="report-help">Tell us what needs correcting. Reports opened on GitHub are public and require a GitHub account; you can review before submitting. You can also copy the report.</p><label>What is incorrect?<select id="report-category" autofocus><option>Original language</option><option>Available audio</option><option>Audio description</option><option>Platform availability</option><option>Subscription or rental details</option><option>Genre</option><option>Other</option></select></label><label>Platform<select id="report-platform"></select></label><label>Correction and source (optional)<textarea id="report-correction" rows="3" maxlength="1000" placeholder="What did you find on the platform? A source link helps."></textarea></label><details><summary>Preview report</summary><textarea id="report-preview" rows="8" readonly aria-label="Report preview"></textarea></details><div class="report-actions"><button type="button" id="report-copy">Copy report</button><a id="report-github" target="_blank" rel="noopener noreferrer">Review on GitHub ↗</a></div><p id="report-feedback" role="status"></p></dialog>
-  <script src="app.js?v=rail21"></script>
+  <script src="app.js?v=rail22"></script>
   <script src="/analytics.js?v=2" defer></script>
 </body>
 </html>
