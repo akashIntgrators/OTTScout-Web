@@ -9,6 +9,7 @@ class Node {
     this.attributes = {}; this.textContent = ''; this.value = '';
     this.dataset = {}; this.style = { setProperty() {} };
   }
+  get parentElement() { return this.parent; }
   append(...nodes) { nodes.forEach(node => { node.parent = this; this.children.push(node); }); }
   replaceChildren(...nodes) { this.children.forEach(node => { node.parent = null; }); this.children = []; this.append(...nodes); }
   setAttribute(name, value) { this.attributes[name] = String(value); }
@@ -34,8 +35,8 @@ class Node {
 
 const ids = new Map();
 const document = {
-  querySelector: selector => ids.get(selector) || null,
-  querySelectorAll: selector => selector === '#catalog .card' ? ids.get('#catalog').querySelectorAll('.card') : selector === '#weekly-kind button' ? ids.get('#weekly-kind').querySelectorAll('button') : [],
+  querySelector: selector => ids.get(selector) || (selector.includes(' ')?ids.get(selector.split(' ')[0])?.querySelector(selector.split(' ').slice(1).join(' ')):null) || null,
+  querySelectorAll: selector => selector.startsWith('#')&&selector.includes(' ')?ids.get(selector.split(' ')[0])?.querySelectorAll(selector.split(' ').slice(1).join(' '))||[]:body.querySelectorAll(selector),
   getElementById: id => body.querySelectorAll('*').find(result => result.id === id) || null,
   createElement: tag => new Node(tag, document),
   createTextNode: text => { const result = new Node('#text', document); result.textContent = text; return result; },
@@ -50,11 +51,20 @@ const panel = node('filters-panel', 'details');
 const summary = node('filters-summary', 'summary', panel);
 const badge = node('filter-count', 'span', summary);
 const parameters = node('filter-parameters', 'div', panel);
+node('selection-status','span',parameters);
+const advanced = node('advanced-filters', 'details', parameters);
+const advancedSummary = node('advanced-summary', 'summary', advanced);
 const menus = ['platform', 'language', 'original', 'genre'].map(name => {
-  const menu = node(name + '-menu', 'details', parameters);
-  node(name + '-summary', 'summary', menu);
+  const menu = node(name + '-menu', 'details', advanced);
+  const summary=node(name + '-summary', 'summary', menu);summary.append(document.createElement('small'));
   return menu;
 });
+for (const [name,menu,names] of [['platforms',menus[0],['Netflix','Prime Video']],['languages',menus[1],['English','Hindi','Telugu','Tamil','Kannada','Malayalam']]]) {
+  const list=node(name,'div',menu);
+  for(const value of names){const input=document.createElement('input');input.value=value;list.append(input);}
+}
+const quickPlatforms=['Netflix','Prime Video','SonyLIV'].map(name=>{const button=node('quick-'+name,'button',parameters);button.className='quick-platform';button.dataset.platform=name;return button;});
+const quickLanguages=['English','Hindi','Telugu','Tamil','Kannada','Malayalam'].map(name=>{const button=node('quick-'+name,'button',parameters);button.className='quick-language';button.dataset.language=name;return button;});
 const input = node('platform-checkbox', 'input', menus[0]);
 const reset = node('reset-filters', 'button', parameters);
 const done = node('filters-done', 'button', parameters);
@@ -65,6 +75,8 @@ const suggestions = node('search-suggestions', 'div');
 node('suggestion-status', 'p');
 const dialog = node('report-dialog', 'dialog');
 for (const id of ['count','weekly-count','view-eyebrow','description','result-count','results-status']) node(id, 'p');
+node('leaving-count','span');node('pick-one','button');
+const toggleDates=node('toggle-dates','button');
 node('restore-hidden', 'button', parameters);
 const weeklyGroup = node('weekly-kind', 'div', parameters);
 for (const kind of ['all','older','other']) {
@@ -75,16 +87,17 @@ const catalog = node('catalog', 'div');
 node('load-more', 'button');
 for (const id of ['subscription-only', 'original-only', 'audio-description-only']) node(id, 'input', parameters);
 let mobile = true;
+const mediaListeners=[];
 const stored = new Map();
 const source = fs.readFileSync('app.js', 'utf8').split("for (const kind of ['platforms','languages']) renderOptions(kind);")[0];
 const context = vm.createContext({
-  document, window: { matchMedia: query => { assert.ok(['(max-width:760px)','(max-width:650px)'].includes(query)); return { matches: mobile }; } },
+  document, window: { matchMedia: query => { assert.ok(['(max-width:900px)','(max-width:650px)'].includes(query)); return { get matches(){return mobile;},addEventListener(type,listener){if(query==='(max-width:900px)')mediaListeners.push(listener);} }; } },
   localStorage: { getItem: () => null, setItem: (key, value) => stored.set(key, value) },
   console, Intl, URL, menus, setTimeout: () => 0, clearTimeout() {},
 });
 vm.runInContext(source, context);
 const run = code => vm.runInContext(code, context);
-run('const renderResults=render;');
+run('const renderResults=render;const updateSelectionsReal=updateSelections;');
 function escape() {
   return { key: 'Escape', defaultPrevented: false, stopped: false,
     preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
@@ -113,7 +126,7 @@ search.focus(); suggestions.hidden = false;
 panel.open = true; panel.fire('toggle', menus[0]);
 assert.equal(document.activeElement, search, 'A child toggle must not dismiss search focus');
 assert.equal(suggestions.hidden, false, 'A child toggle must not close autocomplete');
-panel.fire('toggle');
+panel.fire('toggle');advanced.open=true;
 assert.equal(document.activeElement, body, 'Opening Filters must blur the mobile search input');
 assert.equal(suggestions.hidden, true, 'Opening Filters must close autocomplete');
 assert.equal(search.value, 'Drive', 'Dismissing the search keyboard must retain its query');
@@ -125,23 +138,27 @@ assert.equal(menus[0].open, false);
 assert.equal(panel.open, true, 'First Escape must leave the parent open');
 assert.equal(document.activeElement, menus[0].querySelector('summary'));
 globalEscape();
-assert.equal(panel.open, false, 'Second Escape must close the parent');
+assert.equal(advanced.open, false, 'Second Escape must close More filters');
+assert.equal(panel.open, true);
+assert.equal(document.activeElement, advancedSummary);
+globalEscape();
+assert.equal(panel.open, false, 'Third Escape must close the parent');
 assert.equal(document.activeElement, summary);
 assert.equal(snapshot(), initialState, 'Escape changed selected filters or watchlist state');
 
-panel.open = true; menus[1].open = true;
+panel.open = true; advanced.open=true;menus[1].open = true;
 menus[1].querySelector('summary').focus();
 panel.open = false; panel.fire('toggle');
 assert.ok(menus.every(menu => !menu.open), 'Closing the parent left a child expanded');
 assert.equal(document.activeElement, summary, 'Closing parent left focus hidden inside it');
 
-panel.open = true; menus[2].open = true; done.focus(); done.onclick(); panel.fire('toggle');
+panel.open = true; advanced.open=true;menus[2].open = true; done.focus(); done.onclick(); panel.fire('toggle');
 assert.equal(panel.open, false);
 assert.ok(menus.every(menu => !menu.open));
 assert.equal(document.activeElement, heading, 'Show titles must navigate to the result heading');
 assert.equal(snapshot(), initialState, 'Show titles cleared selections');
 
-panel.open = true; menus[0].open = true; dialog.open = true;
+panel.open = true;advanced.open=true; menus[0].open = true; dialog.open = true;
 assert.equal(globalEscape().defaultPrevented, false);
 assert.equal(panel.open, true); assert.equal(menus[0].open, true, 'Report-dialog Escape closed background filters');
 dialog.open = false; suggestions.hidden = false;
@@ -182,7 +199,8 @@ assert.equal(run('saved.has("motn:42")'), true, 'Removing parameter chips erased
 mobile = false;
 const wideState = snapshot();
 run('setupFilterPanel(menus)');
-assert.equal(panel.open, false, 'Wide screens should also start with filters collapsed');
+assert.equal(panel.open, true, 'Wide screens should start with the sidebar filters expanded');
+assert.equal(advanced.open, false, 'More filters must remain collapsed on desktop');
 assert.ok(menus.every(menu => !menu.open));
 assert.equal(snapshot(), wideState, 'Starting closed on a wide screen changed saved selections');
 panel.open = true; panel.fire('toggle');
@@ -190,6 +208,12 @@ run('originalOnly=true;activeFilterChips()');
 chips.children[0].onclick();
 assert.equal(document.activeElement, reset, 'Reset remains a valid focus target while the panel is expanded');
 assert.equal(run('titles===originalTitles'), true);
+const resizeState=snapshot();mobile=true;mediaListeners.forEach(listener=>listener());
+assert.equal(panel.open,false);assert.equal(advanced.open,false);assert.equal(document.activeElement,summary);
+assert.equal(snapshot(),resizeState,'Resizing to mobile lost selections');
+mobile=false;mediaListeners.forEach(listener=>listener());
+assert.equal(panel.open,true);assert.equal(document.activeElement,search);
+assert.equal(snapshot(),resizeState,'Resizing to desktop lost selections');
 console.log('Mobile filter disclosure, grouped badge, retained state, Escape priority and visible focus scenarios passed.');
 
 run(`view='weekly';weeklyKind='older';activeFilterChips()`);
@@ -249,13 +273,14 @@ for (const view of ['weekly', 'discover', 'watchlist']) {
 run(`
 const cardNow=Date.now()/1000;
 const cardFixture={id:'motn:101',title:'A rental film',type:'Movie',year:2001,originalLanguage:'English',
+  overview:'A test overview that can be clamped to two lines.',tmdb:{genres:['Drama','Thriller','Mystery','Comedy']},
   lastCheckedAt:cardNow-60,weekly:true,weeklyPlatforms:['Netflix'],weeklyUpdatedAt:cardNow-60,
   weeklyEvents:[{platform:'Netflix',addedAt:cardNow-60}],
   offers:[{platform:'Netflix',type:'rent',audio:['English'],link:'https://www.netflix.com/title/123',availableSince:cardNow-60}]};
 liveCatalog={missingPlatforms:[],recentHistoryComplete:true};view='weekly';
 titles=[cardFixture,{...cardFixture,id:'motn:102',title:'Another film'}];render();
 `);
-const firstCard = catalog.children[0];
+const firstCard = catalog.querySelectorAll('.card')[0];
 const options = firstCard.querySelector('.watch-options');
 const hide = firstCard.querySelector('.dismiss-title');
 const checked = firstCard.querySelector('.checked-date');
@@ -263,7 +288,7 @@ assert.equal(options.open, false);
 assert.ok(options.contains(hide), 'Hide title must be inside Where to watch');
 assert.ok(options.contains(checked), 'Availability date must be inside Where to watch');
 assert.match(checked.textContent, /^Availability checked /);
-for (const className of ['card-title', 'card-languages', 'rental-label', 'addition-label']) {
+for (const className of ['card-title', 'card-languages', 'rental-label']) {
   const detail = firstCard.querySelector('.' + className);
   assert.ok(detail && !options.contains(detail), className + ' should remain visible before expanding Where to watch');
 }
@@ -271,13 +296,22 @@ assert.equal(firstCard.querySelector('.rental-label').textContent, 'Rent only');
 assert.match(firstCard.querySelector('.card-languages').textContent, /Audio: English/);
 assert.equal(firstCard.querySelector('.original-language').textContent, 'Original language: English');
 assert.ok(options.contains(firstCard.querySelector('.original-language')), 'Original language should be inside Where to watch');
+assert.ok(options.contains(firstCard.querySelector('.addition-label')), 'Repeated addition date should be inside Where to watch');
+assert.equal(firstCard.querySelector('.card-title').tagName,'H3');
+assert.equal(catalog.children[0].querySelector('.date-label').tagName,'H2');
+assert.match(firstCard.querySelector('.card-meta').textContent,/English original · 2001 · Movie/);
+assert.equal(firstCard.querySelector('.card-genres').children.length,3);
+const cardBody=firstCard.querySelector('.card-body');
+assert.ok(cardBody.children.indexOf(firstCard.querySelector('.card-genres'))<cardBody.children.indexOf(firstCard.querySelector('.card-overview')));
+assert.equal(firstCard.children[0].tagName,'A');
+assert.equal(firstCard.querySelector('.save').parentElement,firstCard,'Watchlist button must sit outside the poster link');
 assert.match(firstCard.querySelector('.addition-label').textContent, /Added /);
 options.open = true; hide.focus(); hide.onclick();
 assert.equal(run('dismissed.has("motn:101")'), true, 'Relocated Hide title lost its handler');
 assert.ok(stored.get('ottscout-dismissed').includes('motn:101'), 'Hide title no longer persists');
-assert.equal(catalog.children.length, 1);
-assert.equal(catalog.children[0].dataset.titleId, 'motn:102');
-assert.equal(document.activeElement, catalog.children[0].querySelector('a'), 'Hiding a title must preserve focus on the next card');
+assert.equal(catalog.querySelectorAll('.card').length, 1);
+assert.equal(catalog.querySelectorAll('.card')[0].dataset.titleId, 'motn:102');
+assert.equal(document.activeElement, catalog.querySelectorAll('.card')[0].querySelector('.card-title').querySelector('a'), 'Hiding a title must preserve focus on the next visible card');
 assert.equal(ids.get('#restore-hidden').hidden, false, 'Hidden title must remain restorable');
 run('saved.add("motn:102");view="watchlist";render()');
 assert.equal(catalog.children[0].querySelector('.dismiss-title'), null, 'Watchlist should keep its existing absence of Hide title');
@@ -303,3 +337,124 @@ assert.equal(infeed.children.length, 1);
 assert.equal(infeed.children[0].textContent, 'Advertisement');
 assert.equal(infeed.querySelector('.ad-placeholder'), null);
 console.log('In-feed advertisement remains bounded and in its existing position with a single clear label.');
+
+run(`
+updateSelections=updateSelectionsReal;
+selectedPlatforms.clear();platforms.forEach(name=>selectedPlatforms.add(name));
+selectedLanguages.clear();languages.forEach(name=>selectedLanguages.add(name));
+liveCatalog={missingPlatforms:[],recentHistoryComplete:true};view='discover';$('#search').value='';selectedSearchId=null;
+titles=[{...cardFixture,id:'quick-en',title:'English film'},
+ {...cardFixture,id:'quick-hi',title:'Hindi film',offers:[{platform:'Prime Video',audio:['Hindi'],type:'subscription'}]}];
+setupQuickFilters();render();
+`);
+assert.equal(quickPlatforms[2].hidden,true,'Unsupported platform must not appear in the quick choices');
+assert.equal(quickPlatforms[2].disabled,true);
+quickPlatforms[0].onclick();
+assert.equal(run('[...selectedPlatforms].join()'),'Netflix','Choosing a platform from All must isolate it');
+assert.equal(quickPlatforms[0].attributes['aria-pressed'],'true');
+assert.equal(quickPlatforms[1].attributes['aria-pressed'],'false');
+assert.equal(ids.get('#platforms').children[0].checked,true);
+assert.equal(ids.get('#platforms').children[1].checked,false,'Quick choice must sync checkbox controls');
+quickPlatforms[1].onclick();
+assert.equal(run('selectedPlatforms.has("Netflix")&&selectedPlatforms.has("Prime Video")'),true,'Quick platforms must allow multiple choices');
+quickLanguages[1].onclick();
+assert.equal(run('[...selectedLanguages].join()'),'Hindi','Choosing a language from All must isolate it');
+assert.equal(quickLanguages[1].attributes['aria-pressed'],'true');
+assert.equal(ids.get('#languages').children[1].checked,true);
+assert.equal(ids.get('#languages').children[0].checked,false);
+quickLanguages[0].onclick();assert.equal(run('selectedLanguages.size'),2);
+quickLanguages[0].onclick();assert.equal(run('[...selectedLanguages].join()'),'Hindi');
+assert.equal(stored.get('ottscout-languages'),'["Hindi"]');
+assert.equal(run('saved.has("motn:42")'),true,'Quick filters must not change saved titles');
+
+run(`
+const nativeNow=Date.now;Date.now=()=>Date.parse('2026-11-02T10:00:00Z');
+let lastAnnouncement='';announceResults=message=>{lastAnnouncement=message;};
+selectedPlatforms.clear();platforms.forEach(name=>selectedPlatforms.add(name));
+selectedLanguages.clear();languages.forEach(name=>selectedLanguages.add(name));
+selectedOriginals=null;selectedGenres=null;originalOnly=false;subscriptionOnly=false;audioDescriptionOnly=false;
+view='weekly';weeklyKind='all';$('#search').value='';selectedSearchId=null;weeklyOpen.clear();weeklyLimits.clear();
+const daily=(id,title,added)=>({...cardFixture,id,title,weeklyUpdatedAt:added,weeklyEvents:[{platform:'Netflix',addedAt:added}],offers:[{platform:'Netflix',audio:['English'],type:'subscription',availableSince:added}]});
+const newest=Date.parse('2026-11-01T10:00:00Z')/1000;
+const previous=Date.parse('2026-10-31T10:00:00Z')/1000;
+titles=[...Array.from({length:31},(_,i)=>daily('new-'+i,'New '+String(i).padStart(2,'0'),newest)),
+ ...Array.from({length:12},(_,i)=>daily('old-'+i,'Old '+String(i).padStart(2,'0'),previous))];render();
+`);
+assert.equal(catalog.children.length,2,'Older day headers must exist even when the newest day has over 24 titles');
+let newestGroup=catalog.children[0], olderGroup=catalog.children[1];
+assert.equal(newestGroup.dataset.date,'2026-11-01');
+assert.equal(newestGroup.querySelector('.date-label').textContent,'Sunday, 1 November');
+assert.equal(newestGroup.querySelector('.date-count').textContent,'31 titles');
+assert.equal(newestGroup.open,true);assert.equal(olderGroup.open,false);
+assert.equal(newestGroup.querySelectorAll('.card').length,24);
+assert.equal(olderGroup.querySelectorAll('.card').length,12);
+assert.equal(run('visibleCards().length'),24,'Collapsed-day cards must not count as visible');
+assert.equal(ids.get('#load-more').hidden,true,'Weekly must use per-day paging');
+assert.match(run('lastAnnouncement'),/24 titles shown in 1 open group/);
+assert.equal(toggleDates.textContent,'Collapse all dates');
+run('toggleAllDates()');
+assert.ok(catalog.children.every(group=>!group.open));
+assert.equal(toggleDates.textContent,'Expand all dates');
+assert.equal(document.activeElement,toggleDates,'Date controls must retain focus on their stable button');
+assert.match(run('lastAnnouncement'),/0 titles shown in 0 open groups/);
+run('toggleAllDates()');
+assert.ok(catalog.children.every(group=>group.open));
+assert.equal(toggleDates.textContent,'Collapse all dates');
+assert.match(run('lastAnnouncement'),/36 titles shown in 2 open groups/);
+run('toggleAllDates()');
+newestGroup=catalog.children[0];olderGroup=catalog.children[1];
+newestGroup.open=true;newestGroup.fire('toggle');
+const dayMore=newestGroup.querySelector('.date-load-more');
+assert.match(dayMore.textContent,/Show 7 more.*24 of 31 shown/);
+dayMore.onclick();newestGroup=catalog.children[0];olderGroup=catalog.children[1];
+assert.equal(newestGroup.querySelectorAll('.card').length,31);
+assert.equal(newestGroup.querySelector('.date-load-more'),null);
+assert.equal(olderGroup.open,false,'Paging the latest day must not open older groups');
+assert.equal(document.activeElement.parentElement.id,'title-new-24','Per-day paging must focus the first newly revealed card title');
+olderGroup.open=true;olderGroup.fire('toggle');
+assert.match(run('lastAnnouncement'),/43 titles shown in 2 open groups/);
+newestGroup.open=false;newestGroup.fire('toggle');
+assert.match(run('lastAnnouncement'),/12 titles shown in 1 open group/);
+run('render()');assert.equal(catalog.children[0].open,false);assert.equal(catalog.children[1].open,true);
+assert.equal(catalog.children[0].querySelectorAll('.card').length,31,'Re-rendering lost per-day paging');
+assert.equal(run('visibleCards().every(card=>card.dataset.titleId.startsWith("old-"))'),true,'Focus candidates include a collapsed day');
+run(`$('#search').value='no matches';render();$('#search').value='';setView('discover');setView('weekly');`);
+assert.equal(catalog.children[0].open,false);assert.equal(catalog.children[1].open,true);
+assert.equal(catalog.children[0].querySelectorAll('.card').length,31,'Changing filters/views discarded retained day limits');
+run(`liveCatalog=null;titles=sampleTitles.filter(title=>title.weekly);weeklyOpen.clear();render()`);
+assert.equal(catalog.children.length,1);
+assert.equal(catalog.children[0].dataset.date,'unverified');
+assert.equal(catalog.children[0].querySelector('.date-label').textContent,'Addition date unverified','Sample years must not fabricate addition dates');
+
+run(`
+liveCatalog={missingPlatforms:[],recentHistoryComplete:true};view='leaving';$('#search').value='';selectedSearchId=null;
+const expires=Date.now()/1000+5*DAY;
+const expiring={...cardFixture,id:'expiring',title:'Expiring film',offers:[
+ {platform:'Prime Video',audio:['English'],type:'subscription',link:'https://www.primevideo.com/detail/TEST'},
+ {platform:'Netflix',audio:['English'],type:'rent',expiresOn:expires,link:'https://www.netflix.com/title/123'}]};
+titles=[expiring,{...expiring,id:'sentinel',title:'Sentinel film',offers:[{platform:'Netflix',audio:['English'],type:'subscription',expiresOn:253368115140}]}];render();
+`);
+assert.equal(catalog.children.length,1);
+const leavingCard=catalog.children[0];
+assert.match(leavingCard.querySelector('.expiry-label').textContent,/on Netflix$/,'Departure date must name the expiring platform');
+assert.equal(leavingCard.querySelector('.primary-platform').attributes['aria-label'],'Netflix — watch Expiring film');
+assert.equal(leavingCard.querySelector('.primary-offer-label').textContent,'Rent');
+assert.equal(leavingCard.querySelector('.rental-label').textContent,'Rent option','An expiring rental must not hide an included alternative behind a Rent only label');
+assert.equal(leavingCard.querySelector('.watch-options').querySelectorAll('.offer').length,2,'Where to watch must retain alternative offers');
+assert.equal(ids.get('#leaving-count').textContent,1);
+assert.equal(ids.get('#pick-one').disabled,false);
+assert.equal(toggleDates.hidden,true,'Date controls must be hidden outside the weekly view');
+run(`
+saved.clear();saved.add('expiring');view='watchlist';render();
+const pickState=JSON.stringify({platforms:[...selectedPlatforms],languages:[...selectedLanguages],originals:selectedOriginals,genres:selectedGenres,originalOnly,subscriptionOnly,audioDescriptionOnly,saved:[...saved]});
+pickRandomTitle();
+if(JSON.stringify({platforms:[...selectedPlatforms],languages:[...selectedLanguages],originals:selectedOriginals,genres:selectedGenres,originalOnly,subscriptionOnly,audioDescriptionOnly,saved:[...saved]})!==pickState)throw Error('Random pick changed saved state or filters');
+`);
+assert.equal(run('selectedSearchId'),'expiring');assert.equal(run('view'),'discover');
+assert.match(run('lastAnnouncement'),/^Random pick: Expiring film/);
+assert.equal(document.activeElement,heading);
+run(`$('#search').value='no eligible title';selectedSearchId=null;render();`);
+assert.equal(ids.get('#pick-one').disabled,true);
+const noPickState=snapshot();run('pickRandomTitle()');assert.equal(snapshot(),noPickState);
+run('Date.now=nativeNow');
+console.log('Quick filters, nested sidebar/viewport state, complete date headers, per-day paging, visible focus, Leaving soon and random-pick state scenarios passed.');

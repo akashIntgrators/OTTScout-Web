@@ -11,3 +11,6 @@ class BrowserFilterTests(unittest.TestCase):
 
     def test_filter_disclosure(self):
         subprocess.run(['node', 'tests/filter_disclosure.cjs'], cwd=Path(__file__).resolve().parents[1], check=True)
+
+    def test_catalogue_views(self):
+        subprocess.run(['node', 'tests/catalogue_views.cjs'], cwd=Path(__file__).resolve().parents[1], check=True)
