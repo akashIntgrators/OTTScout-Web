@@ -42,6 +42,24 @@ class DiscoveryBuildTests(unittest.TestCase):
                 self.assertTrue((site/path/'index.html').exists())
             self.assertIn('https://ottscout.techiwithhelmet.com/sitemap.xml', (site/'robots.txt').read_text())
 
+    def test_account_bundle_and_public_config_are_packaged(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            for name in ('index.html','app.js','style.css','CNAME'):(root/name).write_text('')
+            (root/'web').mkdir(); (root/'web/account.js').write_text('// fixture entry')
+            (root/'scripts').mkdir()
+            (root/'scripts/build-auth.mjs').write_text("import {writeFileSync} from 'node:fs';writeFileSync(process.argv[2], '// bundled account fixture');")
+            (root/'data').mkdir(); (root/'data/catalog.json').write_text(json.dumps({'titles':[],'updatedAt':'2026-11-03'}))
+            config={'apiKey':'public-key','authDomain':'project.firebaseapp.com','projectId':'project','appId':'public-app-id'}
+            (root/'firebase-config.json').write_text(json.dumps(config))
+            site=module.build(root,now=1000001)
+            self.assertEqual((site/'account.js').read_text(),'// bundled account fixture')
+            self.assertEqual(json.loads((site/'firebase-config.json').read_text()),config)
+            self.assertFalse((site/'web').exists())
+            config['private_key']='never publish a service-account key'
+            (root/'firebase-config.json').write_text(json.dumps(config))
+            with self.assertRaises(ValueError):module.build(root,now=1000001)
+
     def test_weekly_offer_dates_and_older_movies(self):
         now=1793275200
         title={'type':'Movie','year':2006,'weeklyPlatforms':['Netflix','Prime Video'],

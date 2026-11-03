@@ -3,13 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "python3 -m http.server 5174 --bind 127.0.0.1",
+    "dev": "node scripts/build-auth.mjs && python3 -m http.server 5174 --bind 127.0.0.1",
     "brand:assets": "node scripts/build_brand_assets.mjs",
-    "check": "node --check app.js",
+    "check": "node --check app.js && node --check web/account.js && node --check web/watchlist-sync.js && node --check web/account-session.js",
     "test": "python3 -m unittest discover -s tests -v",
-    "build": "python3 scripts/build_site.py"
+    "build": "python3 scripts/build_site.py",
+    "build:auth": "node scripts/build-auth.mjs",
+    "dev:auth-emulator": "node scripts/build-auth.mjs --emulator && python3 -m http.server 5174 --bind 127.0.0.1"
   },
   "devDependencies": {
-    "@resvg/resvg-js": "^2.6.2"
+    "@resvg/resvg-js": "^2.6.2",
+    "esbuild": "0.25.12"
+  },
+  "dependencies": {
+    "firebase": "13.2.0"
+  },
+  "engines": {
+    "node": ">=24.12.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.7"
   }
 }

@@ -46,10 +46,32 @@ function persist(key, value) {
 }
 const dismissed = new Set(readList('ottscout-dismissed') || []);
 const saved = new Set(readList('ottscout-watchlist') || []);
+let accountToggleInProgress=false;
+let accountWatchlistState=null;
 const legacyExcluded = readList('ottscout-excluded-platforms') || [];
 const selectedPlatforms = new Set((readList('ottscout-platforms') || platforms.filter(name => !legacyExcluded.includes(name))).filter(name => platforms.includes(name)));
 const selectedLanguages = new Set((readList('ottscout-languages') || languages).filter(name => languages.includes(name)));
 
+function watchlistSaveReason() {
+  const state=accountWatchlistState;
+  if(!state)return '';
+  if(state.status==='deletion-pending')return 'Saving is paused because account deletion has started. Open Account to finish deletion.';
+  if(state.status==='read-only')return state.error || 'Saved titles are read-only in this tab. Open Account to retry sync.';
+  if(state.status==='storage-error'||state.canSave===false)return 'Saving is paused to protect your device data. Open Sign in or Account for details.';
+  if(state.uid&&!liveCatalog)return 'Sample titles cannot be synced. Saving will be available when the live catalogue loads.';
+  return '';
+}
+function setSaveAvailability(button) {
+  const reason=watchlistSaveReason();
+  button.disabled=Boolean(reason);button.setAttribute('aria-disabled',String(Boolean(reason)));
+  if(reason){button.setAttribute('aria-describedby','watchlist-save-status');button.title=reason;}
+  else {button.removeAttribute('aria-describedby');button.removeAttribute('title');}
+}
+function updateSaveAvailability() {
+  const reason=watchlistSaveReason(),status=$('#watchlist-save-status');
+  if(status){status.hidden=!reason;status.textContent=reason;}
+  document.querySelectorAll('#catalog .save').forEach(setSaveAvailability);
+}
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -281,10 +303,18 @@ function cardFor(title) {
   save.type = 'button';
   save.setAttribute('aria-label', `${saved.has(title.id) ? 'Remove from' : 'Add to'} watchlist: ${title.title}`);
   save.setAttribute('aria-pressed', saved.has(title.id));
+  setSaveAvailability(save);
   save.onclick = () => {
+    if(save.disabled)return;
     const next=nextCardId(title.id);
-    saved.has(title.id) ? saved.delete(title.id) : saved.add(title.id);
-    persist('ottscout-watchlist', saved);
+    if (window.OTTScoutAccount) {
+      accountToggleInProgress=true;
+      let changed;try { changed=window.OTTScoutAccount.toggle(title.id); } finally { accountToggleInProgress=false; }
+      if (!changed) { announceResults('This title could not be saved. Open Account for details, or choose a live catalogue title.'); return; }
+    } else {
+      saved.has(title.id) ? saved.delete(title.id) : saved.add(title.id);
+      persist('ottscout-watchlist', saved);
+    }
     // Preserve focus when a saved card remains visible.
     if (view === 'watchlist') { render();focusTitle(next); }
     else {
@@ -673,6 +703,7 @@ function render() {
   const content=weekly?weekly.content:[];
   if(!weekly){const adAfter=window.matchMedia('(max-width:650px)').matches?6:12;found.slice(0,visibleLimit).forEach((title,index)=>{content.push(cardFor(title));if(index===adAfter-1&&found.length>adAfter)content.push(adSlot());});}
   $('#catalog').replaceChildren(...(content.length ? content : [emptyState()]));
+  updateSaveAvailability();
   updateDateToggle();
   $('#load-more').hidden = view==='weekly'||found.length <= visibleLimit;
   $('#load-more').textContent = `Show ${Math.min(PAGE_SIZE, Math.max(0,found.length-visibleLimit))} more titles`;
@@ -721,7 +752,7 @@ function setupFilterPanel(menus) {
   $('#filters-done').onclick=()=>{panel.open=false;closeChildren();$('#heading').focus();};
 }
 function handleGlobalKeydown(event,menus) {
-  if(event.defaultPrevented)return;
+  if(event.defaultPrevented || $('#account-dialog')?.open)return;
   if(shortcutsEnabled && event.key==='/'&&!event.altKey&&!event.ctrlKey&&!event.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable && !$('#report-dialog').open){event.preventDefault();$('#search').focus();}
   if($('#report-dialog').open)return;
   if(event.key!=='Escape')return;
@@ -731,6 +762,24 @@ function handleGlobalKeydown(event,menus) {
   if(advanced?.open){event.preventDefault();advanced.open=false;advanced.querySelector('summary').focus();return;}
   const panel=$('#filters-panel');
   if(panel?.open){event.preventDefault();panel.open=false;$('#filters-summary').focus();}
+}
+// Account capability updates apply even when the saved IDs have not changed.
+function applyAccountWatchlistState(state) {
+  if (!(state?.ids instanceof Set)) return;
+  accountWatchlistState=state;
+  const changed=saved.size!==state.ids.size || [...saved].some(id=>!state.ids.has(id));
+  if(!changed){updateSaveAvailability();return;}
+  saved.clear();state.ids.forEach(id=>saved.add(id));
+  if(accountToggleInProgress){updateSaveAvailability();return;}
+  const focused=document.activeElement;
+  const focusedCard=focused?.closest?.('.card');
+  const focusId=focusedCard?.dataset.titleId;
+  const wasSave=focused?.classList?.contains('save');
+  render();
+  if(focusId&&wasSave){
+    const button=[...document.querySelectorAll('#catalog .card')].find(card=>card.dataset.titleId===focusId)?.querySelector('.save');
+    if(button&&!button.disabled)button.focus();
+  }
 }
 for (const kind of ['platforms','languages']) renderOptions(kind);
 if(new URL(window.location.href).searchParams.get('audio-description')==='reported'){audioDescriptionOnly=true;view='discover';}
@@ -816,3 +865,6 @@ async function loadCatalog() {
   }
 }
 loadCatalog();
+
+window.addEventListener('ottscout:watchlist',event=>applyAccountWatchlistState(event.detail));
+window.dispatchEvent(new Event('ottscout:watchlist-request'));

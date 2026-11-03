@@ -528,3 +528,47 @@ run(`dismissed.add('context-prime');render()`);
 assert.ok(catalog.children.every(group=>group.dataset.date!=='2026-11-01'),'A date containing only dismissed titles must not leak back through context');
 run('Date.now=nativeNow');
 console.log('Quick all/partial/none persistence, date-context reset/focus, nested sidebar, paging, Leaving soon and random-pick state scenarios passed.');
+
+// The account modal owns Escape and shortcuts; hidden catalogue controls must not steal focus.
+const accountDialog=node('account-dialog','dialog');accountDialog.open=true;
+const accountControl=node('account-control','button',accountDialog);accountControl.focus();
+panel.open=true;menus[0].open=true;
+context.accountControl=accountControl;
+vm.runInContext("shortcutsEnabled=true;",context);
+let intercepted=false;
+context.accountEvent={key:'Escape',preventDefault(){intercepted=true;}};
+vm.runInContext('handleGlobalKeydown(accountEvent,menus)',context);
+assert.equal(intercepted,false);assert.equal(menus[0].open,true);assert.equal(document.activeElement,accountControl);
+context.accountEvent={key:'/',preventDefault(){intercepted=true;}};
+vm.runInContext('handleGlobalKeydown(accountEvent,menus)',context);
+assert.equal(intercepted,false);assert.equal(document.activeElement,accountControl);
+console.log('Account dialog keeps keyboard actions inside the modal.');
+
+// Saved controls must follow account capability changes even when saved IDs stay identical.
+accountDialog.open=false;
+const saveAvailability=node('watchlist-save-status','p');
+const originalSave=catalog.querySelector('.save');
+assert.ok(originalSave,'A real rendered card save button is required for this regression');
+run(`let accountToggles=0;window.OTTScoutAccount={toggle(){accountToggles++;return true;}};
+applyAccountWatchlistState({uid:'A',ids:new Set(saved),status:'read-only',error:'Your account is open in another tab. Save there, or close it and retry sync here.',canSave:false,ready:true});`);
+assert.equal(catalog.querySelector('.save'),originalSave,'A status-only change should retain the existing card');
+assert.equal(originalSave.disabled,true);
+assert.equal(originalSave.attributes['aria-disabled'],'true');
+assert.equal(originalSave.attributes['aria-describedby'],'watchlist-save-status');
+assert.equal(saveAvailability.hidden,false);assert.match(saveAvailability.textContent,/another tab/);
+originalSave.onclick();assert.equal(run('accountToggles'),0,'Disabled saves must not call the persistence layer');
+run(`applyAccountWatchlistState({uid:'A',ids:new Set(saved),status:'synced',error:'',canSave:true,ready:true});`);
+assert.equal(originalSave.disabled,false,'Taking over sync must restore the same save button');
+assert.equal(originalSave.attributes['aria-disabled'],'false');
+assert.equal(originalSave.attributes['aria-describedby'],undefined);assert.equal(saveAvailability.hidden,true);
+run(`applyAccountWatchlistState({uid:'A',ids:new Set(saved),status:'deletion-pending',error:'Deletion started',canSave:false,ready:false});`);
+assert.equal(originalSave.disabled,true);assert.match(saveAvailability.textContent,/deletion/);
+run(`applyAccountWatchlistState({uid:'A',ids:new Set(saved),status:'read-only',error:'Preparing saved-title sync…',canSave:false,ready:false});`);
+assert.equal(originalSave.disabled,true);assert.match(saveAvailability.textContent,/Preparing/);
+run(`applyAccountWatchlistState({uid:null,ids:new Set(saved),status:'storage-error',error:'Unreadable device data',canSave:false,ready:true});`);
+assert.equal(originalSave.disabled,true);assert.match(saveAvailability.textContent,/device data/);
+run(`applyAccountWatchlistState({uid:'A',ids:new Set(saved),status:'offline',error:'Waiting for connection',canSave:true,ready:false});`);
+assert.equal(originalSave.disabled,false,'A safely writable offline queue remains available');
+run(`applyAccountWatchlistState({uid:null,ids:new Set(saved),status:'guest',error:'',canSave:true,ready:true});delete window.OTTScoutAccount;`);
+assert.equal(originalSave.disabled,false,'Guest saving must remain available');
+console.log('Read-only, loading, storage and deletion states disable saved controls; takeover, offline queue and guest mode restore them.');
