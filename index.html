@@ -23,12 +23,13 @@
   <title>OTTScout — Where to watch movies and series in India</title>
   <link rel="canonical" href="https://ottscout.techiwithhelmet.com/">
   <script src="/theme.js?v=rail22"></script>
-  <link rel="stylesheet" href="style.css?v=rail22">
+  <link rel="stylesheet" href="style.css?v=accounts1">
 </head>
 <body class="dashboard">
   <a class="skip-link" href="#catalog-section">Skip to titles</a>
   <aside class="rail" aria-label="Search and filters">
     <header class="rail-header"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><button class="theme-toggle" type="button" aria-label="Switch to light mode"><svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/></svg></button></header>
+      <div class="account-entry"><button id="account-button" type="button" aria-haspopup="dialog" aria-controls="account-dialog">Sign in</button><span>Optional · Sync your saves</span></div>
       <div class="search-row"><div class="search-autocomplete"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" disabled role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="search-suggestions" autocomplete="off" enterkeyhint="search" placeholder="Loading titles…" aria-label="Search movies and series" aria-describedby="search-help"></label><div id="search-suggestions" class="search-suggestions" role="listbox" aria-label="Title suggestions" hidden></div><p id="suggestion-status" class="sr-only" role="status" aria-live="polite"></p></div>
         <p id="search-help" class="sr-only">Type at least two characters for suggestions. Use arrow keys and Enter to choose, or Escape to close. Results update as you type. Use Tab to reach Filters.</p>
       </div>
@@ -83,6 +84,7 @@
         <div class="browse-toolbar"><nav class="view-tabs" aria-label="Catalog views"><button class="active" data-view="weekly" type="button" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg>New this week <span id="weekly-count">0</span></button><button data-view="discover" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>All titles</button><button data-view="leaving" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>Leaving soon <span id="leaving-count">0</span></button><button data-view="watchlist" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4Z"/></svg>Saved <span id="count">0</span></button></nav><div class="content-controls"><div id="type" class="type-toggle" role="group" aria-label="Content type"><button type="button" data-type="all" aria-pressed="true">All</button><button type="button" data-type="Movie" aria-pressed="false">Movies</button><button type="button" data-type="Series" aria-pressed="false">Series</button></div><button id="pick-one" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01"/></svg>Pick one for me</button></div></div>
         <div class="section-title"><div><h1 id="heading" tabindex="-1">Added this week</h1><p id="description">Movies and series across your selected platforms.</p></div><div class="section-actions"><span id="result-count"></span><button id="toggle-dates" type="button" aria-controls="catalog" hidden>Collapse all dates</button></div></div>
 
+      <p id="watchlist-save-status" class="save-availability" role="status" aria-live="polite" hidden></p>
       <div class="catalog-layout">
       <div class="catalog-main">
         <p id="catalog-loading" class="loading-state" role="status">Loading the India catalogue…</p>
@@ -101,7 +103,37 @@
 
   </div>
   <dialog id="report-dialog" aria-labelledby="report-title" aria-describedby="report-help"><div class="report-header"><h2 id="report-title">Report incorrect details</h2><button id="report-close" type="button" aria-label="Close report">×</button></div><p id="report-help">Tell us what needs correcting. Reports opened on GitHub are public and require a GitHub account; you can review before submitting. You can also copy the report.</p><label>What is incorrect?<select id="report-category" autofocus><option>Original language</option><option>Available audio</option><option>Audio description</option><option>Platform availability</option><option>Subscription or rental details</option><option>Genre</option><option>Other</option></select></label><label>Platform<select id="report-platform"></select></label><label>Correction and source (optional)<textarea id="report-correction" rows="3" maxlength="1000" placeholder="What did you find on the platform? A source link helps."></textarea></label><details><summary>Preview report</summary><textarea id="report-preview" rows="8" readonly aria-label="Report preview"></textarea></details><div class="report-actions"><button type="button" id="report-copy">Copy report</button><a id="report-github" target="_blank" rel="noopener noreferrer">Review on GitHub ↗</a></div><p id="report-feedback" role="status"></p></dialog>
-  <script src="app.js?v=rail22"></script>
+  <dialog id="account-dialog" aria-labelledby="account-title" aria-describedby="account-help">
+    <div class="account-heading"><h2 id="account-title">Save across devices</h2><button id="account-close" type="button" aria-label="Close account">×</button></div>
+    <p id="account-help">Sign in to sync saved titles. Browsing is always available as a guest.</p>
+    <p id="account-unavailable" role="status">Connecting to account services…</p>
+    <div id="account-options" hidden>
+      <div id="account-guest">
+        <button id="account-google" class="account-primary" type="button">Continue with Google</button>
+        <p class="account-divider">Or use your email</p>
+        <form id="account-form">
+          <label for="account-email-input">Email</label><input id="account-email-input" type="email" autocomplete="email" required maxlength="254">
+          <label for="account-password">Password</label><input id="account-password" type="password" autocomplete="current-password" required minlength="1" maxlength="4096">
+          <button id="account-submit" class="account-primary" type="submit">Sign in</button>
+        </form>
+        <form id="account-reset-form" hidden><label for="reset-email">Email for password reset</label><input id="reset-email" type="email" autocomplete="email" required maxlength="254"><button class="account-primary" type="submit">Send reset email</button><button id="account-reset-back" class="account-text" type="button">Back to sign in</button></form>
+        <div class="account-links"><button id="account-switch" class="account-text" type="button">New here? Create an account</button><button id="account-forgot" class="account-text" type="button">Forgot password?</button></div>
+        <p class="account-note">Your guest saves are imported once for each account on this device, without restoring titles already removed from that account. Filters and analytics choices stay on this device.</p>
+      </div>
+      <div id="account-member" hidden>
+        <p id="account-email" class="account-email"></p><p id="account-verification"></p>
+        <div class="account-links"><button id="account-verify" class="account-text" type="button">Send verification email</button><button id="account-check-verification" class="account-text" type="button">Check verification</button></div>
+        <p id="account-sync" role="status" aria-live="polite"></p><button id="account-retry" class="account-text" type="button">Retry sync</button>
+        <button id="account-signout" type="button">Sign out</button>
+        <details id="account-delete"><summary>Delete account</summary><p>This removes your account and cloud watchlist. Your separate guest watchlist remains on this device. Sign in again below to confirm.</p><form id="account-delete-form"><label id="delete-password-label" for="delete-password">Current password<input id="delete-password" type="password" autocomplete="current-password"></label><label class="account-confirm"><input id="delete-confirm" type="checkbox" required> Delete my account and cloud saves permanently</label><button id="account-delete-submit" type="submit">Confirm account deletion</button></form></details>
+      </div>
+    </div>
+    <p id="account-storage-status" role="status" hidden></p>
+    <p id="account-feedback" role="status" aria-live="polite" aria-atomic="true"></p>
+    <div class="account-footer"><a href="/privacy/">Privacy</a><button id="account-continue" type="button">Continue as guest</button></div>
+  </dialog>
+  <script src="app.js?v=accounts1"></script>
+  <script type="module" src="/account.js?v=accounts1"></script>
   <script src="/analytics.js?v=2" defer></script>
 </body>
 </html>

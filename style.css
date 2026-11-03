@@ -365,3 +365,40 @@ footer .seo-nav { width:100%; margin:0; }
   .view-tabs button { display:grid; grid-template-columns:16px minmax(0,1fr) auto; flex:0 0 calc(50% - 1.5px); min-width:0; min-height:48px; padding:7px 8px; gap:6px; font-size:13px; line-height:1.3; text-align:left; white-space:normal; }
   .view-tabs span { margin-left:0; padding:1px 4px; font-size:11px; }
 }
+
+/* Optional account controls share the catalogue's existing surfaces and type. */
+.account-entry { display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; margin-top:14px; }
+.account-entry button { min-height:44px; padding:6px 12px; border:1px solid var(--control); border-radius:5px; background:transparent; font-size:14px; }
+.account-entry span { color:var(--muted); font-size:12px; }
+#account-dialog { width:min(440px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:24px; overflow:auto; border:1px solid var(--control); border-radius:var(--radius); background:var(--panel); color:var(--text); }
+#account-dialog::backdrop { background:#000b; }
+.account-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.account-heading h2 { font-size:24px; line-height:1.2; }
+#account-close { width:44px; height:44px; border:0; background:transparent; font-size:26px; flex:none; }
+#account-dialog p { margin-top:10px; font-size:14px; color:var(--muted); line-height:1.5; }
+#account-dialog label { display:block; margin-top:14px; font-size:14px; }
+#account-dialog input:not([type="checkbox"]) { display:block; width:100%; min-height:46px; margin-top:5px; padding:10px; border:1px solid var(--control); border-radius:5px; background:var(--bg); font-size:16px; }
+#account-dialog :where(button:not(#account-close)) { min-height:44px; padding:9px 12px; border:1px solid var(--control); border-radius:5px; background:transparent; font-size:14px; }
+#account-dialog .account-primary { width:100%; margin-top:16px; background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:650; }
+#account-dialog #account-google { background:transparent; border-color:var(--control); color:var(--text); }
+#account-dialog .account-text { padding-left:0!important; border-color:transparent!important; text-align:left; text-decoration:underline; }
+.account-links { display:flex; flex-wrap:wrap; gap:0 16px; margin-top:4px; }
+#account-dialog .account-divider { margin-top:16px; font-size:12px; }
+#account-dialog .account-note { margin-top:14px; font-size:12px; }
+#account-dialog .account-email { color:var(--text); overflow-wrap:anywhere; font-weight:650; }
+#account-verification { font-size:12px!important; }
+#account-signout { margin-top:12px; }
+#account-delete { margin-top:20px; }
+#account-delete summary { min-height:44px; padding:10px 0; font-size:14px; }
+#account-dialog .account-confirm { display:flex; align-items:flex-start; gap:9px; margin-bottom:12px; }
+.account-confirm input { margin-top:3px; }
+.account-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:16px; }
+.account-footer a { font-size:13px; text-decoration:underline; }
+#account-feedback:empty { display:none; }
+#account-feedback[role="alert"] { color:var(--text); border-left:2px solid var(--control); padding-left:10px; }
+#account-dialog button:disabled { opacity:.65; cursor:wait; }
+@media(max-width:560px) { .account-entry { margin-top:8px; } #account-dialog { padding:18px; } }
+
+.save:disabled { opacity:.45; cursor:not-allowed; }
+.save:disabled:hover { background:transparent; color:var(--muted); }
+.save-availability { margin:0 0 16px; color:var(--muted); font-size:13px; line-height:1.5; }

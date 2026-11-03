@@ -114,6 +114,14 @@ jobs:
           eligible = os.environ.get('METADATA_ONLY') == 'true' or (report['runs'] and report['runs'][-1]['status'] in ('success', 'limited'))
           print('ready=' + str(bool(eligible and report['lastSuccessfulUpdate'] and Path('data/catalog.json').exists())).lower())
           PYCODE
+      - uses: actions/setup-node@v4
+        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install pinned browser dependencies for publication
+        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        run: npm ci
       - name: Prepare website-only Pages artifact
         if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
         run: |

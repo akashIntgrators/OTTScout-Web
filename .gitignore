@@ -9,3 +9,7 @@ node_modules/
 .site/
 
 data/catalog.json
+
+/account.js
+
+/firebase-config.local.json
