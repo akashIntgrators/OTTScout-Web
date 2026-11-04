@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Six-hour India catalog pilot. Standard library only; no secrets in exported files."""
+"""Continuous, quota-bounded India catalog sync. No secrets in exported files."""
 import argparse
 import json
 import os
@@ -24,6 +24,10 @@ LANGUAGES = {'eng': 'English', 'en': 'English', 'hin': 'Hindi', 'hi': 'Hindi',
 # https://tv.apple.com/in/movie/dr-56/umc.cmc.48r2rpynxx4gtg53d94qc7aki
 ORIGINAL_LANGUAGE_CORRECTIONS = {'motn:57489': 'Kannada'}
 DAY = 86400
+MONTHLY_REQUEST_CAP = 400
+RUN_REQUEST_CAP = 12
+MAINTENANCE_REQUESTS_PER_DAY = 8
+BACKFILL_HEADROOM = 20
 
 class SyncError(Exception):
     pass
@@ -53,6 +57,31 @@ def get_meta(db, key, default=None):
 
 def set_meta(db, key, value):
     db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(value)))
+
+def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
+    """Only bulk-import the allowance above a reserve for the rest of this UTC month."""
+    current = datetime.fromtimestamp(now, timezone.utc)
+    start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end = start.replace(year=start.year+1, month=1) if start.month == 12 else start.replace(month=start.month+1)
+    limit = min(MONTHLY_REQUEST_CAP, max(0, monthly_limit))
+    used = db.execute('SELECT count(*) FROM requests WHERE at>=?', (int(start.timestamp()),)).fetchone()[0]
+    remaining = max(0, limit-used)
+    days_left = (int(end.timestamp())-now+DAY-1)//DAY
+    reserve = days_left*MAINTENANCE_REQUESTS_PER_DAY + BACKFILL_HEADROOM
+    return {'monthlyLimit': limit, 'requestsUsed': used, 'requestsRemaining': remaining,
+            'freshnessReserve': reserve, 'backfillAvailable': max(0, remaining-reserve),
+            'headroom': BACKFILL_HEADROOM, 'maintenanceRequestsPerDay': MAINTENANCE_REQUESTS_PER_DAY}
+
+def change_feed_due(db, kind, now):
+    # Resume interrupted windows immediately; their saved query may be older than
+    # the normal cadence. Daily maintenance preserves quota for older titles.
+    if get_meta(db, 'change_window_v2:'+kind):
+        return True
+    watermark = get_meta(db, 'watermark:'+kind)
+    interval = 6*3600 if kind == 'new' else DAY
+    # UTC slots tolerate GitHub scheduling jitter without repeating a manual
+    # check in the same slot or accidentally waiting twelve hours for new titles.
+    return watermark is None or watermark//interval < now//interval
 
 def platform_map(country):
     if country.get('countryCode') != 'in' or not isinstance(country.get('services'), list):
@@ -131,17 +160,15 @@ def save_show(db, show, mapping, now):
 class Client:
     def __init__(self, db, key, mode='direct', monthly_limit=400, run_limit=12):
         self.db, self.key, self.mode = db, key, mode
-        self.monthly_limit, self.run_limit, self.calls = monthly_limit, run_limit, 0
+        self.monthly_limit = min(MONTHLY_REQUEST_CAP, max(0, monthly_limit))
+        self.run_limit, self.calls = min(RUN_REQUEST_CAP, max(0, run_limit)), 0
         self.base = 'https://api.movieofthenight.com/v4' if mode == 'direct' else 'https://streaming-availability.p.rapidapi.com'
 
     def get(self, endpoint, params=None):
-        month = datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00+00:00')
-        start = int(datetime.fromisoformat(month).timestamp())
-        used = self.db.execute('SELECT count(*) FROM requests WHERE at>=?', (start,)).fetchone()[0]
-        if used >= self.monthly_limit or self.calls >= self.run_limit:
+        now = int(time.time())
+        if request_budget(self.db, now, self.monthly_limit)['requestsRemaining'] <= 0 or self.calls >= self.run_limit:
             raise BudgetReached('Configured request limit reached; resume on a later run or adjust budget')
         # Count and commit before sending, including network failures and malformed responses.
-        now = int(time.time())
         row = self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,0)', (now, endpoint))
         request_id = row.lastrowid
         self.db.commit()
@@ -428,10 +455,19 @@ def sync(db, client, now):
         db.commit()
     changed += backfill_recent(db, client, mapping, now)
     # Large change feeds resume from committed pages under the same request caps.
-    for change_type in ('new', 'updated', 'removed'):
-        changed += sync_change_feed(db, client, mapping, change_type, started, now)
-    changed += backfill_original_languages(db, client, mapping, now)
-    changed += backfill_catalog(db, client, mapping, now, max_pages=max(0,min(6,int(os.environ.get('CATALOG_BACKFILL_PAGES','2')))))
+    change_types = sorted(('new', 'updated', 'removed'),
+                          key=lambda kind: not bool(get_meta(db, 'change_window_v2:'+kind)))
+    for change_type in change_types:
+        if change_feed_due(db, change_type, now):
+            changed += sync_change_feed(db, client, mapping, change_type, started, now)
+    budget = request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))
+    pages = min(budget['backfillAvailable'], max(0, min(6, int(os.environ.get('CATALOG_BACKFILL_PAGES', '6')))))
+    changed += backfill_catalog(db, client, mapping, now, max_pages=pages)
+    # TMDB supplies original language without consuming streaming requests. Keep
+    # the legacy streaming-language cursors, but make these extra scans opt-in.
+    budget = request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))
+    original_pages = min(budget['backfillAvailable'], max(0, min(2, int(os.environ.get('ORIGINAL_LANGUAGE_BACKFILL_PAGES', '0')))))
+    changed += backfill_original_languages(db, client, mapping, now, max_pages=original_pages)
     # A resumed feed covers its original frozen window, not the resume time.
     set_meta(db, 'last_success', min(get_meta(db, 'watermark:'+kind, now) for kind in ('new','updated','removed')))
     db.commit()
@@ -440,7 +476,7 @@ def sync(db, client, now):
 def report(db, now):
     runs = db.execute('SELECT at,status,requests,changed,message FROM runs ORDER BY id').fetchall()
     begin = get_meta(db, 'pilot_started', now)
-    month_start = int(datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+    budget = request_budget(db, now, int(os.environ.get('MONTHLY_REQUEST_LIMIT', str(MONTHLY_REQUEST_CAP))))
     coverage = get_meta(db, 'coverage', {})
     catalog = {'totalTitles': 0, 'titlesWithTargetAudio': 0, 'titlesWithUnknownAudio':0, 'titlesWithoutOffers':0, 'titlesNotCheckedFor7Days':0, 'types': {}, 'platforms': {}}
     for raw, checked in db.execute('SELECT body,last_checked FROM titles'):
@@ -461,8 +497,8 @@ def report(db, now):
                 stats['audioLanguages'][language] = stats['audioLanguages'].get(language, 0) + 1
     rechecks=[json.loads(r[0]) for r in db.execute("SELECT value FROM meta WHERE key LIKE 'title_recheck:%'")]
     return {'generatedAt': stamp(now), 'catalog': catalog, 'titleRechecks':rechecks, 'pilotStartedAt': stamp(begin),
-            'pilotEndsAt': stamp(begin + 30 * DAY), 'scheduleHours': 6,
-            'requestsThisMonth': db.execute('SELECT count(*) FROM requests WHERE at>=?', (month_start,)).fetchone()[0],
+            'pilotEndsAt': None, 'collectorMode': 'continuous', 'scheduleHours': 6, 'maintenanceHours': 24,
+            'requestBudget': budget, 'requestsThisMonth': budget['requestsUsed'],
             'requestsDuringPilot': db.execute('SELECT count(*) FROM requests WHERE at>=?', (begin,)).fetchone()[0],
             'supportedPlatforms': list(coverage.get('mapping', {})), 'missingPlatforms': coverage.get('missing', list(PLATFORMS)),
             'lastSuccessfulUpdate': stamp(get_meta(db, 'last_success')) if get_meta(db, 'last_success') else None,
@@ -540,6 +576,9 @@ def export_catalog(db, path, now):
 
 def recheck_reported_titles(db, client, now, records=None):
     """One bounded title lookup per day for unresolved reports; require exact provider identity."""
+    attempted = get_meta(db, 'title_recheck_last_attempt')
+    if attempted is not None and attempted//DAY >= now//DAY:
+        return 0
     if records is None:
         path = Path(__file__).resolve().parents[1] / 'data/title-rechecks.json'
         records = json.loads(path.read_text()) if path.exists() else []
@@ -557,9 +596,12 @@ def recheck_reported_titles(db, client, now, records=None):
         except BudgetReached:
             raise
         except SyncError:
+            set_meta(db, 'title_recheck_last_attempt', now)
             set_meta(db,key,{'checkedAt':now,'resolved':False,'title':row['title'],'status':'lookup_failed'})
             db.commit()
             return 0
+        set_meta(db, 'title_recheck_last_attempt', now)
+        db.commit()
         if not isinstance(results,list): raise SyncError('Invalid title search response')
         matches=[]
         for show in results:
@@ -609,27 +651,24 @@ def main():
             return 1
         set_meta(db, 'pilot_started', now)
         db.commit()
-    if now >= get_meta(db, 'pilot_started') + 30 * DAY:
-        status, message, changed, calls = 'complete', '30-day pilot complete; no API calls made', 0, 0
-    else:
-        key = os.environ.get('STREAMING_API_KEY')
-        if not key:
-            print('STREAMING_API_KEY is missing. Add it as a GitHub Actions repository secret.')
-            return 1
-        client = Client(db, key, os.environ.get('STREAMING_API_MODE', 'direct'),
-                        int(os.environ.get('MONTHLY_REQUEST_LIMIT', '400')),
-                        int(os.environ.get('RUN_REQUEST_LIMIT', '12')))
-        try:
-            changed = recheck_reported_titles(db, client, now)
-            changed += sync(db, client, now)
-            status, message = 'success', 'Catalog check completed'
-        except BudgetReached as error:
-            db.rollback()
-            status, message, changed = 'limited', str(error), 0
-        except (SyncError, sqlite3.Error) as error:
-            db.rollback()
-            status, message, changed = 'failed', str(error), 0
-        calls = client.calls
+    key = os.environ.get('STREAMING_API_KEY')
+    if not key:
+        print('STREAMING_API_KEY is missing. Add it as a GitHub Actions repository secret.')
+        return 1
+    client = Client(db, key, os.environ.get('STREAMING_API_MODE', 'direct'),
+                    int(os.environ.get('MONTHLY_REQUEST_LIMIT', '400')),
+                    int(os.environ.get('RUN_REQUEST_LIMIT', '12')))
+    try:
+        changed = recheck_reported_titles(db, client, now)
+        changed += sync(db, client, now)
+        status, message = 'success', 'Catalog check completed'
+    except BudgetReached as error:
+        db.rollback()
+        status, message, changed = 'limited', str(error), 0
+    except (SyncError, sqlite3.Error) as error:
+        db.rollback()
+        status, message, changed = 'failed', str(error), 0
+    calls = client.calls
     db.execute('INSERT INTO runs(at,status,requests,changed,message) VALUES (?,?,?,?,?)', (now, status, calls, changed, message))
     db.commit()
     result = report(db, now)
@@ -642,7 +681,7 @@ def main():
     cached_on_limit = status == 'limited' and args.allow_cached_on_limit and export_catalog(db, args.export, now)
     print(json.dumps({k: v for k, v in result.items() if k != 'runs'}, indent=2))
     print(f'{status}: {message}; requests this run: {calls}')
-    return 0 if status in ('success', 'complete') or cached_on_limit else 1
+    return 0 if status == 'success' or cached_on_limit else 1
 
 if __name__ == '__main__':
     sys.exit(main())

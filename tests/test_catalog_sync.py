@@ -217,16 +217,26 @@ class CatalogTests(unittest.TestCase):
             sync.backfill_recent(self.db, Invalid(), {'Netflix':'netflix'}, NOW)
         self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
         self.assertFalse(sync.get_meta(self.db,'recent_backfill_v1')['complete'])
-    def test_expired_pilot_makes_zero_calls_without_a_key(self):
-        sync.set_meta(self.db, 'pilot_started', 1)
+    def test_collector_continues_after_thirty_days_without_resetting_state(self):
+        started = NOW - 90 * sync.DAY
+        sync.set_meta(self.db, 'pilot_started', started)
+        sync.set_meta(self.db, 'catalog_backfill_v1:netflix:movie', {'cursor':'saved', 'pages':22, 'complete':False})
+        self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)', (NOW-100, '/changes', 200))
         self.db.commit()
-        result = subprocess.run([sys.executable, str(Path(sync.__file__)), '--db', str(self.root / 'state.sqlite'),
-                                 '--report', str(self.root / 'report.json')],
-                                env={k: v for k, v in os.environ.items() if k != 'STREAMING_API_KEY'}, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = ['catalog_sync.py', '--db', str(self.root / 'state.sqlite'),
+                '--report', str(self.root / 'report.json'), '--export', str(self.root / 'catalog.json')]
+        with patch.object(sys, 'argv', args), patch.dict(os.environ, {'STREAMING_API_KEY':'test-only'}), \
+                patch.object(sync.time, 'time', return_value=NOW), patch.object(sync, 'recheck_reported_titles', return_value=0), \
+                patch.object(sync, 'sync', return_value=0) as collector:
+            self.assertEqual(sync.main(), 0)
+        collector.assert_called_once()
         report = json.loads((self.root / 'report.json').read_text())
-        self.assertEqual(report['runs'][-1]['status'], 'complete')
-        self.assertEqual(report['requestsDuringPilot'], 0)
+        self.assertEqual(report['runs'][-1]['status'], 'success')
+        self.assertIsNone(report['pilotEndsAt'])
+        self.assertEqual(report['collectorMode'], 'continuous')
+        self.assertEqual(report['pilotStartedAt'], sync.stamp(started))
+        self.assertEqual(report['requestsDuringPilot'], 1)
+        self.assertEqual(sync.get_meta(self.db, 'catalog_backfill_v1:netflix:movie')['cursor'], 'saved')
     def test_missing_state_fails_closed_without_initialization(self):
         result = subprocess.run([sys.executable, str(Path(sync.__file__)), '--db', str(self.root / 'empty.sqlite')],
                                 env={k: v for k, v in os.environ.items() if k != 'STREAMING_API_KEY'}, capture_output=True, text=True)
