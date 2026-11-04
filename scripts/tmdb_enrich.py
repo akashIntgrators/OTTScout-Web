@@ -180,7 +180,8 @@ def repair_external_ids(catalog, requested, now):
     import catalog_sync as streaming
     db = streaming.open_db('.state/catalog.sqlite')
     latest = db.execute('SELECT id,requests FROM runs ORDER BY id DESC LIMIT 1').fetchone()
-    remaining = max(0,int(os.environ.get('RUN_REQUEST_LIMIT','12')) - (latest[1] if latest else 12))
+    run_cap = min(streaming.RUN_REQUEST_CAP, max(0, int(os.environ.get('RUN_REQUEST_LIMIT', '12'))))
+    remaining = max(0, run_cap - (latest[1] if latest else run_cap))
     client = streaming.Client(db,os.environ.get('STREAMING_API_KEY',''),os.environ.get('STREAMING_API_MODE','direct'),
                               int(os.environ.get('MONTHLY_REQUEST_LIMIT','400')), remaining)
     repaired = []

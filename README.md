@@ -44,8 +44,8 @@ Open http://127.0.0.1:5174/?auth-emulator=1. Emulator mode requires both the exp
 
 Validated locally on **4 November 2026**: JavaScript checks, **62 repository tests**, and the production website build passed. Browser checks against local Auth/Firestore emulators covered signup/sign-in, reset feedback, guest import, reload, sign-out, account separation, cross-session additions/removals and tab takeover. These checks do not establish production Google sign-in or full screen-reader conformance; published-host authentication and responsive visual checks are recorded separately.
 
-## Live catalogue pilot
+## Live catalogue
 
-The six-hour collector, SQLite state, usage reports and conditional Pages publication are implemented. See [pilot setup and limitations](docs/catalog-pilot.md). The dashboard falls back to labelled sample titles when no validated public catalogue can be loaded.
+The continuous collector checks additions every six hours and other changes daily. Older-title imports use spare quota after a reserve for future updates, with hard limits of 400 streaming requests per UTC calendar month and 12 per run. Existing SQLite progress and request history are retained; there is no 30-day stop. See [collector setup and limitations](docs/catalog-pilot.md). The dashboard falls back to labelled sample titles when no validated public catalogue can be loaded.
 
 Coverage is gradually imported and incomplete; provider support is checked rather than assumed. Audio/subtitles are offer-specific, original language is separate, and unknown dubbing is not inferred. Episode tracking and release email alerts are future work. Provider secrets remain in GitHub Actions, and private collector state must not be published with the website.
