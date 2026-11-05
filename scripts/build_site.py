@@ -3,6 +3,8 @@ from pathlib import Path
 from html import escape
 from urllib.parse import urlparse, quote, urlencode
 import json
+import math
+import re
 import shutil
 import subprocess
 import time
@@ -15,6 +17,11 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 'https://ottscout.techiwithhelmet.com'
 LANGUAGES = ('English', 'Hindi', 'Telugu', 'Tamil', 'Kannada', 'Malayalam')
+WIDGET_PLATFORMS = ('Netflix', 'Prime Video', 'Sun NXT', 'JioHotstar', 'ZEE5', 'aha', 'SonyLIV')
+WIDGET_OFFER_TYPES = ('subscription', 'free', 'rent', 'buy', 'addon')
+WIDGET_POSTER_HOSTS = ('cdn.movieofthenight.com', 'www.movieofthenight.com', 'image.tmdb.org')
+WIDGET_MAX_TITLES = 3000
+WIDGET_MAX_BYTES = 2_000_000
 IST = timezone(timedelta(hours=5, minutes=30))
 
 PRIVACY_CONTENT = '''
@@ -23,6 +30,7 @@ PRIVACY_CONTENT = '''
 <h2 id="device-storage">Saved on your device</h2>
 <p>On the website, guest watchlists, filters, colour theme, optional keyboard shortcut choice and dismissed titles are saved in local browser storage. Clearing website data removes those local preferences, account caches and changes not yet synced.</p>
 <p>On Android, the app saves a catalogue snapshot in its own files for offline browsing. Guest watchlists, appearance preferences, per-account watchlist caches and pending saved-title changes use local app storage. Phone sign-in sessions use Expo SecureStore, backed by Android encrypted storage. Signing out restores the separate guest watchlist; it does not copy account saves into that list.</p>
+<p>The optional Android phone home-screen widget stores a public weekly-catalogue snapshot and your selected platforms, audio languages and movie/series preference in private app storage. It does not read your account, sign-in credentials or watchlist. While a widget is placed, background work can download the public weekly feed and poster images, approximately every six hours; Android can delay these updates. These requests reach GitHub Pages and image hosts as described below. Widget selections stay on your device; the widget adds no analytics or advertising requests.</p>
 <p>Clearing Android app storage or uninstalling can remove local saves, preferences and unsynced changes. Uninstalling does not delete an online OTTScout account. Android TV currently uses guest saves only.</p>
 <h2 id="accounts">Optional accounts and sync</h2>
 <p>You can browse without an account. Optional Google or email/password sign-in on the website and Android phone uses Google Firebase Authentication. Firebase handles your email address, authentication identifiers, sign-in provider and profile information supplied through Google sign-in. Passwords are handled by Firebase and are not stored in the OTTScout catalogue. The website retains its Firebase sign-in session in browser storage until you sign out or clear website data.</p>
@@ -90,6 +98,89 @@ def safe_link(value):
     parsed = urlparse(value or '')
     return value if parsed.scheme == 'https' and parsed.netloc else ''
 
+def widget_poster(value):
+    """Only public image CDNs; a widget must not fetch arbitrary remote hosts."""
+    if not isinstance(value, str) or len(value) > 8192:
+        return None
+    try:
+        parsed = urlparse(value)
+        if (parsed.scheme == 'https' and parsed.hostname in WIDGET_POSTER_HOSTS
+                and parsed.port in (None, 443) and not parsed.username and not parsed.password):
+            return value
+    except ValueError:
+        pass
+    return None
+
+def widget_feed(catalog, now):
+    """Derive public weekly offers, never account data or new provider requests.
+
+    A feed is intentionally independent of viewer preferences: Android applies
+    selected languages and platforms locally. Each offer retains its own audio,
+    rental type, addition date and expiry so one platform cannot supply another
+    platform's language or date. Android rechecks dates when rendering offline.
+    """
+    def timestamp(value):
+        return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+    if (not isinstance(catalog, dict) or not isinstance(catalog.get('titles'), list)
+            or not isinstance(catalog.get('updatedAt'), str) or not timestamp(now)):
+        raise ValueError('Invalid catalogue for widget feed')
+    try:
+        datetime.fromisoformat(catalog['updatedAt'].replace('Z', '+00:00'))
+    except ValueError as error:
+        raise ValueError('Invalid widget source timestamp') from error
+    coverage = catalog.get('coverage', [])
+    missing = catalog.get('missingPlatforms', [])
+    if (not isinstance(coverage, list) or not isinstance(missing, list)
+            or any(not isinstance(value, str) for value in coverage + missing)):
+        raise ValueError('Invalid widget platform coverage')
+    present = {offer.get('platform') for title in catalog['titles'] for offer in title.get('offers', [])}
+    platforms = [name for name in WIDGET_PLATFORMS if name in coverage and name not in missing and name in present]
+    titles = []
+    seen = set()
+    for title in catalog['titles']:
+        offers = []
+        for offer in title.get('offers', []):
+            if offer.get('platform') not in platforms:
+                continue
+            added = weekly_offer_date(title, offer, now)
+            expiry = offer.get('expiresOn')
+            if not timestamp(added) or (timestamp(expiry) and expiry <= now):
+                continue
+            if expiry is not None and not timestamp(expiry):
+                raise ValueError('Invalid widget offer expiry')
+            audio = offer.get('audio')
+            if (offer.get('type') not in WIDGET_OFFER_TYPES or not isinstance(audio, list)
+                    or len(audio) > 200 or any(not isinstance(value, str) or not value.strip() or len(value) > 200 for value in audio)):
+                raise ValueError('Invalid widget offer')
+            if audio and not any(language in LANGUAGES for language in audio):
+                continue
+            offers.append({'platform': offer['platform'], 'type': offer['type'],
+                           'audio': list(dict.fromkeys(audio)), 'addedAt': added, 'expiresOn': expiry})
+        if not offers:
+            continue
+        ident = title.get('id')
+        name = title.get('title')
+        if (not isinstance(ident, str) or len(ident) > 100 or not re.fullmatch(r'motn:[a-zA-Z0-9-]+', ident)
+                or ident in seen or title.get('type') not in ('Movie', 'Series')
+                or not isinstance(name, str) or not name.strip() or len(name) > 1000 or len(offers) > 100):
+            raise ValueError('Invalid widget title')
+        seen.add(ident)
+        row = {'id': ident, 'title': name, 'type': title['type'], 'offers': offers}
+        poster = widget_poster(title.get('poster'))
+        if poster:
+            row['poster'] = poster
+        titles.append(row)
+    titles.sort(key=lambda title: (-max(offer['addedAt'] for offer in title['offers']), title['title'].casefold(), title['id']))
+    feed = {'schemaVersion': 1, 'country': 'IN', 'updatedAt': catalog['updatedAt'],
+            'generatedAt': datetime.fromtimestamp(now, timezone.utc).isoformat(), 'coverage': platforms, 'titles': titles}
+    encoded = json.dumps(feed, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')
+    # A failed build keeps the last successful deployment. Never silently trim
+    # later titles, which would make language/platform filtering incomplete.
+    if len(titles) > WIDGET_MAX_TITLES or len(encoded) > WIDGET_MAX_BYTES:
+        raise ValueError('Widget feed exceeds its bounded size')
+    return encoded
+
 def build(root=ROOT, now=None):
     now = int(time.time()) if now is None else now
     target = root / '.site'
@@ -154,13 +245,14 @@ def build(root=ROOT, now=None):
     info_nav = '<nav class="seo-nav" aria-label="About OTTScout"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account</a><a href="/guides/telugu-weekend-picks/">Weekend picks</a></nav>'
     page('/about/', 'About OTTScout', 'An independent guide to streaming movies and series in India.', '<h2>Find something worth watching</h2><p>OTTScout helps you compare platform availability, audio languages and original-language metadata, then follow a link to the streaming service. We do not host movies or sell streaming subscriptions.</p><p>We focus on English, Hindi, Telugu, Tamil, Kannada and Malayalam. The current feed covers Netflix, Prime Video, JioHotstar, ZEE5 and SonyLIV. Imported coverage is partial and availability can change.</p><h2>How the catalogue works</h2><p>Movie of the Night supplies streaming offers and audio options. TMDB supplies matched original languages and genres. Uncertain matches stay unverified. Audio availability and original language are separate: a Telugu original may only have Hindi audio on a particular platform.</p><p>Updates are scheduled approximately every six hours, subject to provider quotas and scheduler delays. Provider-reported additions are not necessarily premieres. Always confirm the offer on the streaming service.</p><p>This independent project is maintained by <a href="https://github.com/akashIntgrators">Akash</a>. Browse as a guest with browser-local saves, or optionally sign in to sync your watchlist.</p>' + info_nav)
     page('/contact/', 'Contact and corrections', 'Help improve OTTScout through our public GitHub issue tracker.', '<h2>Found something incorrect?</h2><p>Use “Report incorrect details” on a title, or <a href="https://github.com/akashIntgrators/OTTScout-Web/issues/new">open a GitHub issue</a> for feedback and general enquiries. Include the title, streaming platform, language and a source link where possible.</p><p>GitHub requires an account. Issues are public: please do not include passwords, API keys, billing details or other private information. You can review the report before submitting.</p><p>We welcome corrections, feature suggestions and questions about the project.</p>' + info_nav)
-    page('/privacy/', 'Privacy at OTTScout', 'How the OTTScout website and Android apps handle accounts, saved titles and device data. Updated 4 November 2026.', PRIVACY_CONTENT + info_nav)
+    page('/privacy/', 'Privacy at OTTScout', 'How the OTTScout website and Android apps handle accounts, saved titles and device data. Updated 6 November 2026.', PRIVACY_CONTENT + info_nav)
     page('/delete-account/', 'Delete your OTTScout account', 'Delete your optional OTTScout account and online watchlist through the website, Android app or a private email request.', DELETION_CONTENT + info_nav)
     page('/accessibility/', 'Accessibility help for OTTScout', 'Keyboard navigation, screen-reader support and audio-description discovery on OTTScout.', '<h2>Use the dashboard with a keyboard</h2><ul><li>Use the Skip to titles link to reach the results.</li><li>Press Tab and Shift+Tab to move between controls. Enter opens links; Enter or Space operates buttons and checkboxes.</li><li>Filter menus use native expandable controls. Press Escape to close an open filter and return to its heading.</li><li>Result counts are announced after filters change. Switching views moves focus to the results heading. Hiding a title or removing it from a watchlist moves focus to the next title when possible.</li><li>The optional / search shortcut is off by default. Enable it in <a href="/#accessibility-options">Keyboard options</a> if it works with your assistive technology.</li></ul><h2>Read without the interactive dashboard</h2><p>The <a href="/this-week/">text weekly feed</a>, language pages and title details use ordinary headings, lists and links and work without JavaScript. The dashboard uses JavaScript for filtering and browser-local watchlists.</p><h2>Find description tracks</h2><p><a href="/audio-description/">Read the audio-description guide</a> for provider-reported candidates, description languages and check dates. A spoken website, subtitles, a dubbed track and a film’s audio-description track are different things.</p><h2>Current limitations and feedback</h2><p>Source data and description-track coverage are incomplete. India playback is not independently verified. Automated checks and keyboard tests do not establish full accessibility conformance; testing with blind users and a range of screen readers is still needed.</p><p>If a control or page is difficult to use, <a href="https://github.com/akashIntgrators/OTTScout-Web/issues/new">report an accessibility issue on GitHub</a>. Include the page and the browser/screen reader you use. GitHub reports are public; avoid personal information. We welcome feedback on focus order, labels and announcements.</p>' + info_nav)
     source = target / 'data/catalog.json'
     if source.exists():
         catalog = apply_reports(json.loads(source.read_text()),reports)
         source.write_text(json.dumps(catalog,ensure_ascii=False),encoding='utf-8')
+        (target / 'data/widget.json').write_bytes(widget_feed(catalog, now))
         titles = catalog['titles']
         updated = escape(catalog.get('updatedAt', 'Unknown'))
         note = f'<p class="seo-note">Snapshot updated: {updated}. Imported catalogue coverage is limited; this is not an exhaustive list. Provider-reported additions are not confirmed OTT premiere dates.</p>'
