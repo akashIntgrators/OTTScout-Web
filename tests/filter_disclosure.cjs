@@ -20,7 +20,7 @@ class Node {
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
-  fire(type, target = this) { (this.listeners[type] || []).forEach(listener => listener({ target })); }
+  fire(type, target = this, extra = {}) { (this.listeners[type] || []).forEach(listener => listener({ target, ...extra })); }
   blur() { if (this.owner.activeElement === this) this.owner.activeElement = this.owner.body; }
   focus() {
     for (let node = this; node; node = node.parent) {
@@ -35,6 +35,9 @@ class Node {
 
 const ids = new Map();
 const document = {
+  listeners: {},
+  addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); },
+  fire(type, target) { (this.listeners[type] || []).forEach(listener => listener({ target })); },
   querySelector: selector => ids.get(selector) || (selector.includes(' ')?ids.get(selector.split(' ')[0])?.querySelector(selector.split(' ').slice(1).join(' ')):null) || null,
   querySelectorAll: selector => selector.startsWith('#')&&selector.includes(' ')?ids.get(selector.split(' ')[0])?.querySelectorAll(selector.split(' ').slice(1).join(' '))||[]:body.querySelectorAll(selector),
   getElementById: id => body.querySelectorAll('*').find(result => result.id === id) || null,
@@ -119,10 +122,33 @@ const originalTitles=titles;
 const initialState = snapshot();
 menus[0].open = true;
 run('setupFilterPanel(menus)');
+run('setupFilterMenus(menus)');
 assert.equal(panel.open, false, 'Mobile filters should start collapsed');
 assert.ok(menus.every(menu => !menu.open), 'Starting collapsed must close child menus');
 assert.equal(snapshot(), initialState, 'Disclosure setup changed catalogue selections');
 run('if(titles!==originalTitles)throw Error("Disclosure setup replaced titles")');
+
+// A filter panel must remain open while focus moves within it, and close as
+// soon as keyboard focus reaches a control outside it (in either direction).
+panel.open = true; advanced.open = true; menus[0].open = true;
+menus[0].fire('focusout', input, {relatedTarget: menus[0].querySelector('summary')});
+assert.equal(menus[0].open, true, 'Moving within a menu must keep it open');
+menus[0].fire('focusout', input, {relatedTarget: menus[1].querySelector('summary')});
+assert.equal(menus[0].open, false, 'Leaving a menu must close it');
+menus[0].open = true; menus[0].fire('focusout', input, {relatedTarget: null});
+assert.equal(menus[0].open, false, 'Leaving the document must close the menu');
+menus[0].open = true; menus[1].open = true; menus[1].fire('toggle');
+assert.equal(menus[0].open, false, 'Opening another menu must close the previous one');
+document.fire('click', input);
+assert.equal(menus[1].open, false, 'Clicking outside a menu must close it');
+menus[0].open = true; heading.focus(); globalEscape();
+assert.equal(menus[0].open, false);
+assert.equal(document.activeElement, heading, 'Escape outside an open menu must not move focus');
+globalEscape();
+assert.equal(document.activeElement, heading, 'Escape outside advanced filters must not move focus');
+globalEscape();
+assert.equal(document.activeElement, heading, 'Escape outside the filter panel must not move focus');
+panel.fire('toggle');
 
 search.focus(); suggestions.hidden = false;
 panel.open = true; panel.fire('toggle', menus[0]);
@@ -526,6 +552,24 @@ assert.equal(run('saved.has("expiring")'),true,'Resetting filters must keep the 
 assert.equal(run('dismissed.has("dismissed-context")'),true,'Resetting filters must not unhide dismissed titles');
 run(`dismissed.add('context-prime');render()`);
 assert.ok(catalog.children.every(group=>group.dataset.date!=='2026-11-01'),'A date containing only dismissed titles must not leak back through context');
+// Restoring from an empty filtered view must leave focus somewhere visible and
+// announce what changed, without promising that the restored titles match.
+panel.open=true;
+run(`view='discover';selectedPlatforms.clear();dismissed.clear();dismissed.add('context-prime');dismissed.add('dismissed-context');render()`);
+const restoreButton=ids.get('#restore-hidden');
+assert.equal(restoreButton.hidden,false);
+restoreButton.focus();run('restoreHiddenTitles()');
+assert.equal(restoreButton.hidden,true);
+assert.equal(document.activeElement,heading,'Restoring must move focus from the hidden button to the results heading');
+assert.equal(run('dismissed.size'),0);
+assert.deepEqual(JSON.parse(stored.get('ottscout-dismissed')),[],'Restored state must persist');
+assert.equal(run('view'),'discover');assert.equal(run('selectedPlatforms.size'),0,'Restoring must retain filters');
+assert.equal(catalog.querySelectorAll('.card').length,0,'Restoring must not bypass filters');
+assert.equal(run('lastAnnouncement'),'2 hidden titles restored. Current filters and view still apply.');
+run(`dismissed.add('context-prime');render()`);restoreButton.focus();run('restoreHiddenTitles()');
+assert.equal(run('lastAnnouncement'),'1 hidden title restored. Current filters and view still apply.');
+assert.equal(document.activeElement,heading);
+run('availablePlatforms().forEach(name=>selectedPlatforms.add(name));render()');
 run('Date.now=nativeNow');
 console.log('Quick all/partial/none persistence, date-context reset/focus, nested sidebar, paging, Leaving soon and random-pick state scenarios passed.');
 
@@ -572,3 +616,37 @@ assert.equal(originalSave.disabled,false,'A safely writable offline queue remain
 run(`applyAccountWatchlistState({uid:null,ids:new Set(saved),status:'guest',error:'',canSave:true,ready:true});delete window.OTTScoutAccount;`);
 assert.equal(originalSave.disabled,false,'Guest saving must remain available');
 console.log('Read-only, loading, storage and deletion states disable saved controls; takeover, offline queue and guest mode restore them.');
+
+// A toggle button keeps one name and exposes its saved state separately.
+run(`
+liveCatalog={missingPlatforms:[],recentHistoryComplete:true};view='discover';
+titles=[cardFixture,{...cardFixture,id:'motn:102',title:'Another film'}];
+saved.clear();dismissed.clear();selectedPlatforms.clear();availablePlatforms().forEach(name=>selectedPlatforms.add(name));
+selectedLanguages.clear();languages.forEach(name=>selectedLanguages.add(name));
+selectedOriginals=null;selectedGenres=null;originalOnly=false;subscriptionOnly=false;audioDescriptionOnly=false;
+$('#search').value='';selectedSearchId=null;render();
+`);
+const cardById=id=>catalog.querySelectorAll('.card').find(card=>card.dataset.titleId===id);
+const firstSave=cardById('motn:101').querySelector('.save');
+const secondSave=cardById('motn:102').querySelector('.save');
+assert.equal(firstSave.attributes['aria-label'],'Save to watchlist: A rental film');
+assert.equal(firstSave.attributes['aria-pressed'],'false');
+firstSave.focus();firstSave.onclick();
+assert.equal(firstSave.attributes['aria-label'],'Save to watchlist: A rental film');
+assert.equal(firstSave.attributes['aria-pressed'],'true');
+assert.equal(document.activeElement,firstSave,'Saving in Discover must retain focus on the toggle');
+assert.equal(run('lastAnnouncement'),'A rental film added to your watchlist. 1 saved title.');
+secondSave.onclick();
+assert.equal(run('lastAnnouncement'),'Another film added to your watchlist. 2 saved titles.');
+run("view='watchlist';render()");
+const watchlistSave=cardById('motn:101').querySelector('.save');
+assert.equal(watchlistSave.attributes['aria-label'],'Save to watchlist: A rental film');
+assert.equal(watchlistSave.attributes['aria-pressed'],'true');
+watchlistSave.focus();watchlistSave.onclick();
+assert.equal(run('lastAnnouncement'),'A rental film removed from your watchlist. 1 saved title.');
+assert.equal(document.activeElement,cardById('motn:102').querySelector('.card-title').querySelector('a'),'Removing a saved title must focus the next card');
+const lastSave=cardById('motn:102').querySelector('.save');lastSave.focus();lastSave.onclick();
+assert.equal(run('lastAnnouncement'),'Another film removed from your watchlist. 0 saved titles.');
+assert.equal(document.activeElement,heading,'Removing the last saved title must focus the results heading');
+assert.deepEqual(JSON.parse(stored.get('ottscout-watchlist')),[],'Unsaving must persist');
+console.log('Watchlist toggles keep a stable name, announce accurate counts, and preserve focus.');
