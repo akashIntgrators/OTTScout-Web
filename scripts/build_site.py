@@ -11,8 +11,10 @@ import time
 from datetime import datetime, timezone, timedelta
 try:
     from scripts.site_features import apply_reports, valid_reports, netflix_id, schema_graph, json_script, language_label
+    from scripts.editorial_guides import EDITORIAL_GUIDES
 except ModuleNotFoundError:
     from site_features import apply_reports, valid_reports, netflix_id, schema_graph, json_script, language_label
+    from editorial_guides import EDITORIAL_GUIDES
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 'https://ottscout.techiwithhelmet.com'
@@ -41,7 +43,7 @@ PRIVACY_CONTENT = '''
 <p>Links to streaming services, TMDB and GitHub open services with their own privacy practices. OTTScout does not receive your streaming-service password or payment details through those links. A correction report is published only when you choose to submit it on GitHub; public issues should not contain private account information.</p>
 <h2 id="analytics-ads">Analytics and advertising</h2>
 <p>Website Google Analytics is optional and loads only after you choose Allow analytics. It measures page visits and device/browser information; Google receives connection information such as your IP address. Our page-view event excludes search terms, filters, watchlist contents, URL query strings and referrers. Automatic enhanced measurement and advertising signals are disabled. Your choice stays in this browser. Use Analytics choices in the footer, then No thanks, to stop future measurement and remove analytics cookies set for this host. This does not erase previously collected data. Browsers signalling Do Not Track or Global Privacy Control are not prompted automatically.</p>
-<p>The native Android apps do not include a separate product-analytics integration. Ad-free Android Play testing builds exclude the Google Mobile Ads SDK and make no advertising requests. Android TV also excludes that SDK. The older 0.4.0 Android phone developer test build includes Google demo ads: its SDK makes test-ad requests and may process connection, device and ad-request information even though requests are non-personalized and cannot earn revenue. The website’s advertisement boxes are reserved space, not live ads. A future live-ad release will need updated disclosures.</p>
+<p>The native Android apps do not include a separate product-analytics integration. Ad-free Android Play testing builds exclude the Google Mobile Ads SDK and make no advertising requests. Android TV also excludes that SDK. The older 0.4.0 Android phone developer test build includes Google demo ads: its SDK makes test-ad requests and may process connection, device and ad-request information even though requests are non-personalized and cannot earn revenue. The website currently runs without advertising. A future live-ad release will need updated disclosures.</p>
 <h2 id="retention-deletion">Retention and account deletion</h2>
 <p>Cloud watchlist entries, including saved and removed status, stay associated with your account until account deletion. Unsaving a title changes its status; the removal entry remains so older saves do not restore it. Local cached data stays on a device until replaced, cleared or removed. Sign out on shared devices. Only one website tab at a time writes an account cache; guest browsing remains available when a browser cannot safely write account saves.</p>
 <p>Use <a href="/delete-account/">Delete your OTTScout account</a> for browser and Android instructions or an email request route. You do not have to reinstall the app. Account deletion reauthenticates you, removes the Firebase Authentication account and its cloud watchlist, and clears the account cache on the device completing deletion. Separate guest saves are kept. Account deletion does not remotely erase local copies on other devices. Clear OTTScout’s app or website storage on those devices to remove those copies. Signing out stops active account access but can retain a local account cache.</p>
@@ -217,32 +219,51 @@ def build(root=ROOT, now=None):
     theme_script = '<script src="/theme.js?v=rail22"></script>' if (root / 'theme.js').exists() else ''
     urls = ['/']
     navigation = '<a href="/">Dashboard</a><a href="/this-week/">This week</a>' + ''.join(f'<a href="/languages/{lang.lower()}/">{lang}</a>' for lang in LANGUAGES)
-    navigation += '<a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a>'
-    def page(path, title, description, content, work=None):
+    navigation += '<a href="/guides/">Guides</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a>'
+    def page(path, title, description, content, work=None, indexable=True):
         canonical = BASE + path
         structured = json_script(schema_graph(path,title,description,work))
+        robots = '' if indexable else '<meta name="robots" content="noindex,follow">'
+        page_class = 'seo-page guide-page' if path.startswith('/guides/') else 'seo-page'
         markup = f'''<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)} | OTTScout</title><meta name="description" content="{escape(description,quote=True)}">
+{robots}
 <link rel="canonical" href="{canonical}"><meta property="og:title" content="{escape(title,quote=True)}">
 <meta property="og:description" content="{escape(description,quote=True)}"><meta property="og:url" content="{canonical}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="OTTScout">
 <meta property="og:image" content="{BASE}/assets/ottscout-social.png?v=brand14"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="OTTScout — Find it. Save it. Watch it.">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="{BASE}/assets/ottscout-social.png?v=brand14"><meta name="twitter:image:alt" content="OTTScout — Find it. Save it. Watch it.">
 <link rel="icon" href="/favicon.ico?v=brand14" type="image/x-icon"><link rel="icon" href="/assets/ottscout-icon.svg?v=brand14" type="image/svg+xml"><link rel="icon" href="/assets/ottscout-icon.png?v=brand14" type="image/png"><link rel="apple-touch-icon" href="/assets/ottscout-touch-icon.png?v=brand14"><meta name="apple-mobile-web-app-title" content="OTTScout">
-{structured}{theme_script}<link rel="stylesheet" href="/style.css?v=accessibility2"></head><body>
+{structured}{theme_script}<link rel="stylesheet" href="/style.css?v=streaming-guides1"></head><body>
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="site-header"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><span class="region">Streaming in India</span><button class="theme-toggle" type="button" aria-label="Switch to light mode"><span class="sun-icon" aria-hidden="true">☼</span><span class="moon-icon" aria-hidden="true">◐</span></button></header>
-<nav class="seo-nav seo-navigation" aria-label="Browse streaming">{navigation}</nav><main id="main" class="seo-page" tabindex="-1">
+<nav class="seo-nav seo-navigation" aria-label="Browse streaming">{navigation}</nav><main id="main" class="{page_class}" tabindex="-1">
 <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">OTTScout</a><span aria-hidden="true"> / </span><span aria-current="page">{escape(title)}</span></nav>
 <h1>{escape(title)}</h1><p class="seo-description">{escape(description)}</p>{content}
 <section class="credits" aria-label="Data credits"><h2>Data credits</h2><a href="https://www.themoviedb.org"><img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg" width="56" height="40" alt="TMDB"></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></main>
-<footer class="seo-footer"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><nav class="seo-nav" aria-label="Site information"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a><a href="/guides/telugu-weekend-picks/">Weekend picks</a></nav><p>India · Availability may change. Audio and subtitles vary by platform.</p><a href="https://www.movieofthenight.com/about/api">Streaming data by Movie of the Night</a></footer><script src="/analytics.js?v=2" defer></script></body></html>'''
+<footer class="seo-footer"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><nav class="seo-nav" aria-label="Site information"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a><a href="/guides/">Streaming guides</a></nav><p>India · Availability may change. Audio and subtitles vary by platform.</p><a href="https://www.movieofthenight.com/about/api">Streaming data by Movie of the Night</a></footer><script src="/analytics.js?v=2" defer></script></body></html>'''
         dest = target / path.strip('/') / 'index.html'
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(markup, encoding='utf-8')
-        urls.append(path)
-    info_nav = '<nav class="seo-nav" aria-label="About OTTScout"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account</a><a href="/guides/telugu-weekend-picks/">Weekend picks</a></nav>'
+        if indexable:
+            urls.append(path)
+    for editorial_guide in EDITORIAL_GUIDES:
+        page(*editorial_guide)
+    guide_links = ''.join(
+        f'<li><h3><a href="{path}">{escape(title)}</a></h3><p>{escape(description)}</p></li>'
+        for path, title, description, _ in EDITORIAL_GUIDES
+    )
+    if (target / 'data/catalog.json').exists():
+        guide_links += '''
+<li><h3><a href="/guides/telugu-weekend-picks/">Five Telugu films for the weekend</a></h3><p>Choose a film by the kind of story you want, then check the latest Telugu subscription offers in the catalogue.</p></li>
+<li><h3><a href="/this-week/#reading-additions">How to read weekly additions</a></h3><p>Distinguish a film's release year, the date a service added an offer, and the date OTTScout checked it.</p></li>'''
+    page('/guides/', 'Streaming guides for India',
+         'Find the right audio track, check what your subscription includes, and learn how to read OTTScout’s availability reports.',
+         '<h2>Plan what to watch</h2><ul class="guide-index">' + guide_links + '''
+<li><h3><a href="/audio-description/">Find audio-description tracks</a></h3><p>Read dated provider reports and learn how to confirm narration in your player before watching.</p></li>
+</ul><p><a href="/">Search the India streaming catalogue</a></p>''')
+    info_nav = '<nav class="seo-nav" aria-label="About OTTScout"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account</a><a href="/guides/">Streaming guides</a></nav>'
     page('/about/', 'About OTTScout', 'An independent guide to streaming movies and series in India.', '<h2>Find something worth watching</h2><p>OTTScout helps you compare platform availability, audio languages and original-language metadata, then follow a link to the streaming service. We do not host movies or sell streaming subscriptions.</p><p>We focus on English, Hindi, Telugu, Tamil, Kannada and Malayalam. The current feed covers Netflix, Prime Video, JioHotstar, ZEE5 and SonyLIV. Imported coverage is partial and availability can change.</p><h2>How the catalogue works</h2><p>Movie of the Night supplies streaming offers and audio options. TMDB supplies matched original languages and genres. Uncertain matches stay unverified. Audio availability and original language are separate: a Telugu original may only have Hindi audio on a particular platform.</p><p>Updates are scheduled approximately every six hours, subject to provider quotas and scheduler delays. Provider-reported additions are not necessarily premieres. Always confirm the offer on the streaming service.</p><p>This independent project is maintained by <a href="https://github.com/akashIntgrators">Akash</a>. Browse as a guest with browser-local saves, or optionally sign in to sync your watchlist.</p>' + info_nav)
     page('/contact/', 'Contact and corrections', 'Help improve OTTScout through our public GitHub issue tracker.', '<h2>Found something incorrect?</h2><p>Use “Report incorrect details” on a title, or <a href="https://github.com/akashIntgrators/OTTScout-Web/issues/new">open a GitHub issue</a> for feedback and general enquiries. Include the title, streaming platform, language and a source link where possible.</p><p>GitHub requires an account. Issues are public: please do not include passwords, API keys, billing details or other private information. You can review the report before submitting.</p><p>We welcome corrections, feature suggestions and questions about the project.</p>' + info_nav)
     page('/privacy/', 'Privacy at OTTScout', 'How the OTTScout website and Android apps handle accounts, saved titles and device data. Updated 6 November 2026.', PRIVACY_CONTENT + info_nav)
@@ -286,16 +307,25 @@ def build(root=ROOT, now=None):
         page('/guides/telugu-weekend-picks/', 'Five Telugu films for your weekend watchlist', 'A mood-based shortlist spanning action, romance, aviation and investigation, with Telugu audio offers in India.', '<p>Published 28 October 2026 · Curated catalogue picks, not a list of new premieres.</p><p>Start with the kind of evening you want, then check the platform. These choices are based on published story premises and catalogue metadata, rather than first-hand reviews. Platform availability below is refreshed with the site snapshot; confirm on the provider before watching.</p>' + ''.join(sections) + note + info_nav)
         ordered = sorted(titles, key=lambda t:t['title'].casefold())
         recent = sorted([t for t in titles if t.get('weekly') and isinstance(t.get('weeklyUpdatedAt'), (int,float)) and now-7*86400 <= t['weeklyUpdatedAt'] <= now], key=lambda t:t['weeklyUpdatedAt'], reverse=True)
-        page('/this-week/', 'OTT additions this week in India', 'Provider-reported additions in the last seven days. These are not confirmed OTT premiere dates; a series addition does not confirm a new season or episode.', note + '<h2>Older movies added</h2><p>Films released before the current year, with a recent offer reported on a covered platform.</p>' + cards([t for t in recent if older_movie(t, now)], weekly=True) + '<h2>Other additions</h2><p>Series updates and movie additions outside the older-movie group. Premiere dates remain unverified.</p>' + cards([t for t in recent if not older_movie(t, now)], weekly=True))
+        weekly_guide = '''
+<h2 id="reading-additions">How to read an addition date</h2>
+<p>A film can be decades old and still be new to a particular subscription. The <strong>Added</strong> date below is the latest reported addition among the services listed for that title. A 2001 film added this week belongs under <strong>Older movies added</strong>, even if another service already carried it. Filter the dashboard to one service if you want to check its additions separately.</p>
+<p>On a title page, <strong>Availability checked</strong> is the date of OTTScout’s last recorded check. For a series, use the platform’s episode list to confirm which seasons are included. If you want a rental or subscription offer on a different service, check that offer separately.</p>
+<p><a href="/">Filter additions by your platforms</a> or <a href="/guides/">browse the streaming guides</a>.</p>'''
+        page('/this-week/', 'OTT additions this week in India', 'Provider-reported additions in the last seven days. These are not confirmed OTT premiere dates; a series addition does not confirm a new season or episode.', note + weekly_guide + '<h2>Older movies added</h2><p>Films released before the current year, with a recent offer reported on a covered platform.</p>' + cards([t for t in recent if older_movie(t, now)], weekly=True) + '<h2>Other additions</h2><p>Series updates and movie additions outside the older-movie group. Premiere dates remain unverified.</p>' + cards([t for t in recent if not older_movie(t, now)], weekly=True))
         for lang in LANGUAGES:
             page(f'/languages/{lang.lower()}/', f'{lang} movies and series on OTT in India', f'Find movies and series with {lang} audio on covered streaming platforms in India. Check platform-specific audio, subtitles and subscription or rental options.', f'<h2>Choose {lang} audio with confidence</h2><p>This list matches audio reported on each platform, including dubbed versions. It does not mean every title was originally made in {lang}. Use Originally and Watch in separately on the dashboard.</p><p>Check the offer type before subscribing: a rental, purchase or paid add-on can be listed on the same service as a base-subscription option. Subtitles are listed separately on each title page.</p><p>Looking for narrated visual action? <a href="/audio-description/">Check the sourced audio-description guide</a>; ordinary {lang} audio does not establish an audio-description track.</p>' + note + cards(ordered, lang))
         names = {'subscription':'Included with subscription', 'free':'Free to watch', 'rent':'Rental', 'buy':'Purchase', 'addon':'Add-on subscription'}
         for t in titles:
             rows = []
-            for o in offers_for(t):
+            title_offers = offers_for(t)
+            has_actionable_offer = False
+            for o in title_offers:
                 link = safe_link(o.get('link'))
                 provider = f'<a href="{escape(link, quote=True)}" rel="noopener noreferrer">{escape(o["platform"])} ↗</a>' if link else escape(o['platform'])
                 report=o.get('audioDescription')
+                if link and o.get('type') in names and (o['audio'] or o.get('subtitles') or report):
+                    has_actionable_offer = True
                 ad = ('<p>Audio description reported: '+escape(' · '.join(report['languages']))+'</p><p><a href="'+escape(report['sourceURL'],quote=True)+'">Provider audio-description report</a> · Checked '+checked_date(report['checkedAt'],now)+'. India playback unverified; confirm the track in the player.</p>') if report else '<p>Audio description: Unverified. Ordinary audio and subtitles do not confirm a description track.</p>'
                 rows.append(f'<li>{provider}<p>{escape(names.get(o.get("type"), "Offer unverified"))}{(" · " + escape(o["addon"])) if o.get("addon") else ""}</p><p>Audio: {escape(" · ".join(language_label(v) for v in o["audio"]) or "Unverified")}</p><p>Subtitles: {escape(" · ".join(language_label(v) for v in o.get("subtitles", [])) or "Unverified")}</p>{ad}</li>')
             issue_body = f"Title: {t['title']}\nCatalogue ID: {t['id']}\nPage: {BASE + title_path(t)}\nOriginal language listed: {t.get('originalLanguage') or 'Unverified'}\n\nWhat is incorrect?\n\nCorrection and source:\n"
@@ -308,8 +338,10 @@ def build(root=ROOT, now=None):
             verification = 'No confident TMDB match; details are not guessed from available audio.' if t.get('tmdbMatchStatus') == 'unmatched' else 'TMDB lookup pending.' if not metadata else 'TMDB metadata checked ' + checked_date(metadata.get('checkedAt'), now) + ' (IST). Missing source details remain Unverified.'
             freshness = '<p>Availability checked ' + checked_date(t.get('lastCheckedAt'), now) + ' (IST). This is the last title check, not the latest catalogue run.</p><p>' + escape(verification) + '</p><p>Original-language source: ' + escape(t.get('originalLanguageSource') or 'Unverified') + '</p><p>OTT premiere date: Unverified. Provider addition dates are not premiere dates.</p>'
             display = t['title'] + (f' ({t["year"]})' if t.get('year') else '')
-            providers = ', '.join(dict.fromkeys(o['platform'] for o in offers_for(t))) or 'covered OTT platforms'
-            page(title_path(t), f'{display} — where to watch in India', f'Where to watch {display} in India. Compare {providers} offers, audio languages, subtitles and sourced accessibility reports.', f'<p>{escape(str(t.get("year") or "Year unverified"))} · {escape(t["type"])}</p><p>Original language: {escape(original_label(t.get("originalLanguage")))}</p>'+freshness+'<h2>Where to watch</h2><ul class="seo-offers">'+''.join(rows)+'</ul>'+genres+report_link+note,work=t)
+            providers = ', '.join(dict.fromkeys(o['platform'] for o in title_offers))
+            description = f'Where to watch {display} in India. Check offers on {providers}.' if providers else f'OTTScout catalogue record for {display}. Viewing offers for the tracked audio languages are currently unavailable.'
+            offer_content = '<ul class="seo-offers">' + ''.join(rows) + '</ul>' if rows else '<p>The current snapshot has no matching viewing offers for the six languages we track. <a href="/">Search the wider catalogue</a>.</p>'
+            page(title_path(t), f'{display} — where to watch in India', description, f'<p>{escape(str(t.get("year") or "Year unverified"))} · {escape(t["type"])}</p><p>Original language: {escape(original_label(t.get("originalLanguage")))}</p>'+freshness+'<h2>Where to watch</h2>'+offer_content+genres+report_link+note,work=t,indexable=has_actionable_offer)
     else:
         # Validation builds have no provider snapshot. Never invent indexable listings.
         print('No public catalogue snapshot; discovery pages will be generated during catalogue deployment.')
