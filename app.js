@@ -236,15 +236,12 @@ function matchingOffers(title, weeklyOnly = view === 'weekly') {
 function formatLanguages(available) {
   if (!available.length) return 'Unverified';
   const preferred = languages.filter(language => available.includes(language));
-  if (preferred.length) {
-    const others = available.length - preferred.length;
-    return preferred.join(' · ') + (others ? ` · +${others} more` : '');
-  }
-  const labels = available.map(language => {
+  const remaining = available.filter(language => !preferred.includes(language));
+  const labels = [...preferred, ...remaining].map(language => {
     try { return /^[a-z]{2,3}$/.test(language) ? new Intl.DisplayNames(['en'], {type:'language'}).of(language) : language; }
     catch { return language; }
   });
-  return labels.slice(0,3).join(' · ') + (labels.length > 3 ? ` · +${labels.length - 3} more` : '');
+  return labels.join(' · ');
 }
 const offerNames = {subscription:'Included with subscription', free:'Free to watch', rent:'Rent', buy:'Buy', addon:'Add-on subscription', sample:'Sample listing'};
 function rentalLabel(offers) {
@@ -321,6 +318,7 @@ function cardFor(title) {
       save.textContent = saved.has(title.id) ? '✓' : '+'; // taste-skill-ignore: checked state, paired with aria-pressed.
       save.setAttribute('aria-pressed', saved.has(title.id));
       $('#count').textContent = saved.size;
+      syncViewButtons();
     }
     announceResults(`${title.title} ${saved.has(title.id)?'added to':'removed from'} your watchlist. ${saved.size} saved ${saved.size===1?'title':'titles'}.`);
   };
@@ -333,8 +331,8 @@ function cardFor(title) {
   const audioLabel=!audio.length?'Audio languages unverified':(audioDescriptionOnly?'Description audio: ':'Audio: ')+formatLanguages(audio);
   heading.append(name);
   const rental=rentalLabel(watchOffers);
-  if (rental) heading.append(document.createTextNode(' '),element('span',rental,'rental-label'));
   body.append(heading);
+  if (rental) body.append(element('span',rental,'rental-label'));
   body.append(element('p',(title.originalLanguage?formatLanguages([title.originalLanguage])+' original':'Original language unverified')+' · '+(Number.isInteger(title.year)?title.year:'Year unverified')+' · '+title.type,'card-meta'));
   const genres=(liveCatalog?title.tmdb?.genres:title.genres)||[];
   if(genres.length){const list=element('div',undefined,'card-genres');genres.filter(genre=>typeof genre==='string'&&genre!=='Unverified').slice(0,3).forEach(genre=>list.append(element('span',genre,'genre-chip')));if(list.children.length)body.append(list);}
@@ -352,9 +350,11 @@ function cardFor(title) {
     options.append(element('p', `${additionLabel(title)} · Added ${checkedDate(added)}`, 'addition-label'));
   }
   watchOffers.forEach(offer => options.append(offerBody(offer,false,title.title)));
-  if (liveCatalog) { const details=element('a','Full title details','provider');details.href='/titles/'+encodeURIComponent(title.id.replace(/^motn:/,''))+'/';options.append(details); }
+  const actions=element('div',undefined,'card-actions');
+  if (liveCatalog) { const details=element('a','Full title details','provider');details.href='/titles/'+encodeURIComponent(title.id.replace(/^motn:/,''))+'/';actions.append(details); }
   const report = element('button','Report incorrect details','report-button');
-  report.type='button';report.setAttribute('aria-label','Report incorrect details for '+title.title); report.onclick=()=>openReport(title); options.append(report);
+  report.type='button';report.setAttribute('aria-label','Report incorrect details for '+title.title); report.onclick=()=>openReport(title); actions.append(report);
+  options.append(actions);
   if (view !== 'watchlist') {
     const dismiss = element('button', 'Hide title', 'dismiss-title');
     dismiss.type = 'button';
@@ -368,8 +368,8 @@ function cardFor(title) {
   return card;
 }
 function adSlot() {
-  const slot = element('aside', undefined, 'ad-slot ad-infeed');
-  slot.setAttribute('aria-label','Reserved in-feed advertisement space');
+  const slot = element('div', undefined, 'ad-slot ad-infeed');
+  slot.setAttribute('aria-hidden','true');
   slot.append(element('span','Advertisement','ad-label'));
   return slot;
 }
@@ -520,12 +520,21 @@ function setupQuickFilters() {
 }
 function setView(next, moveFocus=false) {
   view = next; visibleLimit = PAGE_SIZE;
-  document.querySelectorAll('.view-tabs button').forEach(button => {
-    button.classList.toggle('active',button.dataset.view === view);
-    if (button.dataset.view === view) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current');
-  });
+  syncViewButtons();
   render();
   if(moveFocus)$('#heading').focus();
+}
+function syncViewButtons() {
+  const labels={weekly:'New this week',discover:'All titles',leaving:'Leaving soon',watchlist:'Saved'};
+  const counts={weekly:$('#weekly-count').textContent,leaving:$('#leaving-count')?.textContent,watchlist:$('#count').textContent};
+  const pending=$('#catalog-section')?.dataset.ready==='false';
+  document.querySelectorAll('.view-tabs button').forEach(button => {
+    button.classList.toggle('active',button.dataset.view === view);
+    button.setAttribute('aria-pressed',button.dataset.view === view);
+    const count=counts[button.dataset.view];
+    const detail=button.dataset.view==='watchlist'?'saved':'matching';
+    button.setAttribute('aria-label',labels[button.dataset.view]+(pending||count===undefined?'':`, ${count} ${detail} ${String(count)==='1'?'title':'titles'}`));
+  });
 }
 function emptyState() {
   const node = element('div',undefined,'empty');
@@ -538,7 +547,7 @@ function emptyState() {
   else if (subscriptionOnly) message='No base-subscription offers match these filters. Try more platforms or turn off Included with subscription.';
   else if (liveCatalog && [...selectedPlatforms].every(name => liveCatalog.missingPlatforms.includes(name))) message = 'Our current data provider does not cover the selected platforms. Choose another platform to explore available titles.';
   else if (audioDescriptionOnly) {heading='No current description reports match';message='Try more description languages or explore the full catalogue. Unverified does not mean unavailable; confirm tracks with the provider.';}
-  else if (view === 'watchlist') { heading = 'A good watch is worth saving'; message = 'Tap + on a title to add it to your watchlist. Your current filters also apply here.'; }
+  else if (view === 'watchlist') { heading = 'A good watch is worth saving'; message = 'Use the Save to watchlist button on a title to add it to your watchlist. Your current filters also apply here.'; }
   else if (view === 'leaving') {heading='No departures match';message='No matching provider-reported offer end dates in the next 30 days. Listings can change; confirm on the platform.';}
   else if (view === 'weekly') {
     heading = 'No additions match your filters';
@@ -635,10 +644,12 @@ function weeklyGroupsContent(found) {
     const chevron=element('span','⌄','date-chevron');chevron.setAttribute('aria-hidden','true');summary.append(label,count,chevron);group.append(summary);
     const body=element('div',undefined,'date-group-body');
     const list=element('div',undefined,'date-titles');
+    list.setAttribute('role','list');
+    list.setAttribute('aria-label',data.label+' titles');
     const limit=weeklyLimits.get(data.key)||PAGE_SIZE;
     const shown=Math.min(limit,data.titles.length);
     const adAfter=window.matchMedia('(max-width:650px)').matches?6:12;
-    data.titles.slice(0,shown).forEach((title,i)=>{list.append(cardFor(title));if(i===adAfter-1&&data.titles.length>adAfter)list.append(adSlot());});
+    data.titles.slice(0,shown).forEach((title,i)=>{const card=cardFor(title);card.setAttribute('role','listitem');card.setAttribute('aria-posinset',i+1);card.setAttribute('aria-setsize',data.titles.length);list.append(card);if(i===adAfter-1&&data.titles.length>adAfter)list.append(adSlot());});
     if(data.titles.length)body.append(list);
     else{
       const note=element('div',undefined,'date-filtered');
@@ -689,6 +700,7 @@ function render() {
   $('#restore-hidden').textContent = `Restore hidden titles (${dismissed.size})`;
   $('#weekly-count').textContent = filteredTitles('weekly').length;
   if($('#leaving-count'))$('#leaving-count').textContent=filteredTitles('leaving').length;
+  syncViewButtons();
   if($('#pick-one')){const pending=$('#catalog-section')?.dataset.ready==='false';$('#pick-one').disabled=pending||!found.length;$('#pick-one').setAttribute('aria-label',pending?'Pick one for me':'Pick one for me. Random choice from '+found.length+' matching titles');}
   $('#weekly-kind').hidden = view !== 'weekly';
   $('#heading').textContent = {discover:'Discover',weekly:'Added this week',watchlist:'Watchlist',leaving:'Leaving soon'}[view];
@@ -700,7 +712,8 @@ function render() {
   $('#result-count').textContent = `${found.length} ${found.length === 1 ? 'title' : 'titles'}`;
   const weekly=view==='weekly'?weeklyGroupsContent(found):null;
   const content=weekly?weekly.content:[];
-  if(!weekly){const adAfter=window.matchMedia('(max-width:650px)').matches?6:12;found.slice(0,visibleLimit).forEach((title,index)=>{content.push(cardFor(title));if(index===adAfter-1&&found.length>adAfter)content.push(adSlot());});}
+  if(!weekly){const adAfter=window.matchMedia('(max-width:650px)').matches?6:12;found.slice(0,visibleLimit).forEach((title,index)=>{const card=cardFor(title);card.setAttribute('role','listitem');card.setAttribute('aria-posinset',index+1);card.setAttribute('aria-setsize',found.length);content.push(card);if(index===adAfter-1&&found.length>adAfter)content.push(adSlot());});}
+  $('#catalog').setAttribute('role',!weekly&&found.length?'list':'group');
   $('#catalog').replaceChildren(...(content.length ? content : [emptyState()]));
   updateSaveAvailability();
   updateDateToggle();

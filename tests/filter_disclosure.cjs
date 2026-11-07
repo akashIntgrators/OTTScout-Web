@@ -322,6 +322,12 @@ for (const className of ['card-title', 'card-languages', 'rental-label']) {
 }
 assert.equal(firstCard.querySelector('.rental-label').textContent, 'Rent only');
 assert.match(firstCard.querySelector('.card-languages').textContent, /Audio: English/);
+assert.ok(!firstCard.querySelector('.card-title').contains(firstCard.querySelector('.rental-label')), 'Card headings should contain the title only');
+assert.equal(firstCard.querySelector('.card-title').children[0].textContent, 'A rental film');
+assert.equal(run("formatLanguages(['English','Hindi','fr','ja'])"), 'English · Hindi · French · Japanese', 'Every available language must be readable');
+assert.equal(firstCard.querySelector('.report-button').parentElement.className, 'card-actions', 'Details and report controls should have a spaced action group');
+assert.equal(run("adSlot().attributes['aria-hidden']"), 'true', 'Empty ad placeholders must not create screen-reader landmarks');
+assert.equal(run("adSlot().tagName"), 'DIV');
 assert.equal(firstCard.querySelector('.original-language').textContent, 'Original language: English');
 assert.ok(options.contains(firstCard.querySelector('.original-language')), 'Original language should be inside Where to watch');
 assert.ok(options.contains(firstCard.querySelector('.addition-label')), 'Repeated addition date should be inside Where to watch');
@@ -358,13 +364,18 @@ titles=Array.from({length:13},(_,i)=>({...cardFixture,id:'motn:ad-'+i,title:'Fil
 `);
 assert.equal(catalog.children.length, 14);
 const infeed=catalog.children[12];
-assert.equal(infeed.tagName, 'ASIDE', 'Desktop in-feed placement must remain after twelve titles');
-assert.equal(catalog.children.filter(child=>child.tagName==='ASIDE').length, 1);
-assert.equal(infeed.attributes['aria-label'], 'Reserved in-feed advertisement space');
+assert.equal(infeed.tagName, 'DIV', 'Desktop in-feed placement must remain after twelve titles');
+assert.equal(catalog.attributes.role,'list');
+assert.equal(catalog.children[0].attributes.role,'listitem');
+assert.equal(catalog.children[0].attributes['aria-posinset'],'1');
+assert.equal(catalog.children[0].attributes['aria-setsize'],'13');
+assert.equal(catalog.children[13].attributes['aria-posinset'],'13');
+assert.equal(catalog.children.filter(child=>(child.className||'').includes('ad-infeed')).length, 1);
+assert.equal(infeed.attributes['aria-hidden'], 'true');
 assert.equal(infeed.children.length, 1);
 assert.equal(infeed.children[0].textContent, 'Advertisement');
 assert.equal(infeed.querySelector('.ad-placeholder'), null);
-console.log('In-feed advertisement remains bounded and in its existing position with a single clear label.');
+console.log('Empty in-feed advertisement remains in position without creating a landmark.');
 
 run(`
 updateSelections=updateSelectionsReal;
@@ -442,6 +453,9 @@ assert.equal(newestGroup.querySelector('.date-label').textContent,'Sunday, 1 Nov
 assert.equal(newestGroup.querySelector('.date-count').textContent,'31 titles');
 assert.equal(newestGroup.open,true);assert.equal(olderGroup.open,false);
 assert.equal(newestGroup.querySelectorAll('.card').length,24);
+assert.equal(newestGroup.querySelector('.date-titles').attributes.role,'list');
+assert.equal(newestGroup.querySelectorAll('.card')[0].attributes['aria-setsize'],'31');
+assert.equal(newestGroup.querySelectorAll('.card')[23].attributes['aria-posinset'],'24');
 assert.equal(olderGroup.querySelectorAll('.card').length,12);
 assert.equal(run('visibleCards().length'),24,'Collapsed-day cards must not count as visible');
 assert.equal(ids.get('#load-more').hidden,true,'Weekly must use per-day paging');
@@ -650,3 +664,27 @@ assert.equal(run('lastAnnouncement'),'Another film removed from your watchlist. 
 assert.equal(document.activeElement,heading,'Removing the last saved title must focus the results heading');
 assert.deepEqual(JSON.parse(stored.get('ottscout-watchlist')),[],'Unsaving must persist');
 console.log('Watchlist toggles keep a stable name, announce accurate counts, and preserve focus.');
+
+// View controls describe their current state and count, including save actions
+// that update a card without rebuilding the catalogue.
+const originalQueryAll=document.querySelectorAll;
+const viewButtons=['weekly','discover','leaving','watchlist'].map(viewName=>{
+  const button=document.createElement('button');button.dataset.view=viewName;
+  button.classList={toggle(name,on){button.active=on;}};return button;
+});
+document.querySelectorAll=selector=>selector==='.view-tabs button'?viewButtons:originalQueryAll(selector);
+const catalogSection=node('catalog-section','section');catalogSection.dataset.ready='false';
+run("view='discover';syncViewButtons()");
+assert.equal(viewButtons[1].attributes['aria-pressed'],'true');
+assert.equal(viewButtons[0].attributes['aria-pressed'],'false');
+assert.equal(viewButtons[0].attributes['aria-label'],'New this week','Do not announce placeholder counts while loading');
+catalogSection.dataset.ready='true';
+run("saved.clear();liveCatalog={missingPlatforms:[],recentHistoryComplete:true};titles=[cardFixture];view='discover';render()");
+assert.equal(viewButtons[3].attributes['aria-label'],'Saved, 0 saved titles');
+const navSave=catalog.querySelector('.save');navSave.onclick();
+assert.equal(viewButtons[3].attributes['aria-label'],'Saved, 1 saved title');
+run("setView('watchlist')");
+assert.equal(viewButtons[3].attributes['aria-pressed'],'true');
+assert.equal(viewButtons[1].attributes['aria-pressed'],'false');
+assert.equal(viewButtons[3].attributes['aria-current'],undefined);
+console.log('View buttons announce pressed state and accurate counts, including while loading.');
