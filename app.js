@@ -633,7 +633,8 @@ function weeklyGroupsContent(found) {
   const rendered=[];
   const description=()=>{
     const open=rendered.filter(group=>group.node.open);
-    return `This week: ${found.length} matching ${found.length===1?'title':'titles'} across ${groups.length} date ${groups.length===1?'group':'groups'}. ${open.reduce((sum,group)=>sum+group.shown,0)} titles shown in ${open.length} open ${open.length===1?'group':'groups'}.`+(audioDescriptionOnly?' Only matching provider-reported description languages are included; India playback is unverified.':'');
+    const shown=open.reduce((sum,group)=>sum+group.shown,0);
+    return `This week: ${found.length} matching ${found.length===1?'title':'titles'} across ${groups.length} date ${groups.length===1?'group':'groups'}. ${shown} ${shown===1?'title':'titles'} shown in ${open.length} open ${open.length===1?'group':'groups'}.`+(audioDescriptionOnly?' Only matching provider-reported description languages are included; India playback is unverified.':'');
   };
   const content=groups.map((data,index)=>{
     const group=element('details',undefined,'date-group');group.dataset.date=data.key;

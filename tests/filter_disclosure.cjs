@@ -443,9 +443,12 @@ view='weekly';weeklyKind='all';$('#search').value='';selectedSearchId=null;weekl
 const daily=(id,title,added)=>({...cardFixture,id,title,weeklyUpdatedAt:added,weeklyEvents:[{platform:'Netflix',addedAt:added}],offers:[{platform:'Netflix',audio:['English'],type:'subscription',availableSince:added}]});
 const newest=Date.parse('2026-11-01T10:00:00Z')/1000;
 const previous=Date.parse('2026-10-31T10:00:00Z')/1000;
+titles=[daily('only-one','Only one',newest)];render();
+const singleTitleAnnouncement=lastAnnouncement;
 titles=[...Array.from({length:31},(_,i)=>daily('new-'+i,'New '+String(i).padStart(2,'0'),newest)),
  ...Array.from({length:12},(_,i)=>daily('old-'+i,'Old '+String(i).padStart(2,'0'),previous))];render();
 `);
+assert.match(run('singleTitleAnnouncement'),/1 title shown in 1 open group\./,'One visible title must use singular grammar');
 assert.equal(catalog.children.length,2,'Older day headers must exist even when the newest day has over 24 titles');
 let newestGroup=catalog.children[0], olderGroup=catalog.children[1];
 assert.equal(newestGroup.dataset.date,'2026-11-01');
