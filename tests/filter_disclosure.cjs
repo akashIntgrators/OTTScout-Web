@@ -326,8 +326,6 @@ assert.ok(!firstCard.querySelector('.card-title').contains(firstCard.querySelect
 assert.equal(firstCard.querySelector('.card-title').children[0].textContent, 'A rental film');
 assert.equal(run("formatLanguages(['English','Hindi','fr','ja'])"), 'English · Hindi · French · Japanese', 'Every available language must be readable');
 assert.equal(firstCard.querySelector('.report-button').parentElement.className, 'card-actions', 'Details and report controls should have a spaced action group');
-assert.equal(run("adSlot().attributes['aria-hidden']"), 'true', 'Empty ad placeholders must not create screen-reader landmarks');
-assert.equal(run("adSlot().tagName"), 'DIV');
 assert.equal(firstCard.querySelector('.original-language').textContent, 'Original language: English');
 assert.ok(options.contains(firstCard.querySelector('.original-language')), 'Original language should be inside Where to watch');
 assert.ok(options.contains(firstCard.querySelector('.addition-label')), 'Repeated addition date should be inside Where to watch');
@@ -362,20 +360,14 @@ run(`
 liveCatalog={missingPlatforms:[],recentHistoryComplete:true};view='discover';
 titles=Array.from({length:13},(_,i)=>({...cardFixture,id:'motn:ad-'+i,title:'Film '+i}));render();
 `);
-assert.equal(catalog.children.length, 14);
-const infeed=catalog.children[12];
-assert.equal(infeed.tagName, 'DIV', 'Desktop in-feed placement must remain after twelve titles');
+assert.equal(catalog.children.length, 13);
 assert.equal(catalog.attributes.role,'list');
 assert.equal(catalog.children[0].attributes.role,'listitem');
 assert.equal(catalog.children[0].attributes['aria-posinset'],'1');
 assert.equal(catalog.children[0].attributes['aria-setsize'],'13');
-assert.equal(catalog.children[13].attributes['aria-posinset'],'13');
-assert.equal(catalog.children.filter(child=>(child.className||'').includes('ad-infeed')).length, 1);
-assert.equal(infeed.attributes['aria-hidden'], 'true');
-assert.equal(infeed.children.length, 1);
-assert.equal(infeed.children[0].textContent, 'Advertisement');
-assert.equal(infeed.querySelector('.ad-placeholder'), null);
-console.log('Empty in-feed advertisement remains in position without creating a landmark.');
+assert.equal(catalog.children[12].attributes['aria-posinset'],'13');
+assert.ok(catalog.children.every(child=>child.attributes.role==='listitem'));
+console.log('Discover renders a continuous list of title cards.');
 
 run(`
 updateSelections=updateSelectionsReal;

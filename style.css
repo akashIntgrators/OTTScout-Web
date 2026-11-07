@@ -37,6 +37,8 @@ button svg,.watch-options svg { width:18px; height:18px; fill:none; stroke:curre
 .content { min-width:0; margin-left:var(--rail-width); }
 .content>main { padding:28px var(--edge) 0; }
 .rail-header,.site-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:16px; }
+.rail-header-actions { display:flex; align-items:center; gap:8px; }
+.rail-header-actions a { display:inline-flex; align-items:center; min-height:44px; font-size:0.875rem; text-decoration:underline; text-underline-offset:3px; }
 .brand { display:inline-flex; align-items:center; gap:0; font-weight:750; font-size:1.625rem; line-height:1; letter-spacing:-.7px; flex-wrap:wrap; }
 .brand:hover { text-decoration:none; }
 .brand>span:last-child { font-weight:500; }
@@ -204,12 +206,6 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .empty>a { display:block; margin-top:12px; color:var(--accent); text-decoration:underline; }
 .load-more-wrap { margin:24px 0; }
 .loading-state { grid-column:1/-1; padding:40px 0; color:var(--muted); }
-.ad-slot { display:flex; align-items:center; justify-content:center; min-height:100px; border-radius:6px; background:var(--panel); color:var(--muted); }
-.ad-label { font-size:0.75rem; }
-.ad-placeholder { display:none; }
-.ad-infeed { grid-column:1/-1; margin:4px 0; }
-.ad-banner { margin:28px 0; }
-
 /* Dialogs and the existing text routes retain their accessible structure. */
 #report-dialog { width:min(560px,calc(100vw - 32px)); max-height:90dvh; overflow:auto; padding:24px; border:1px solid var(--control); border-radius:var(--radius); background:var(--panel); color:var(--text); }
 #report-dialog::backdrop { background:#000b; }
@@ -235,6 +231,12 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .seo-navigation { max-width:1000px; margin:20px auto; padding:0 24px; }
 .seo-description,.seo-note { color:var(--muted); }
 .seo-note { font-size:0.875rem; }
+.guide-page { max-width:760px; }
+.guide-index { list-style:none; padding:0; }
+.guide-index li+li { margin-top:22px; }
+.guide-index h3 { margin:0 0 4px; }
+.guide-index h3 a { color:var(--accent); text-decoration:underline; text-underline-offset:3px; }
+.guide-index p { margin:0; }
 .seo-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px; padding:0; list-style:none; }
 .seo-list li,.seo-offers li { padding:16px; border-radius:6px; background:var(--panel); }
 .seo-list a,.seo-offers a { color:var(--accent); }
@@ -295,7 +297,6 @@ footer .seo-nav { width:100%; margin:0; }
   .card-title { padding-right:32px; }
   .watch-options>summary { min-height:44px; }
   .filter-chip { min-height:44px; }
-  .ad-banner { display:none; }
 }
 @media (max-width:560px) {
   :root { --edge:16px; }

@@ -367,12 +367,6 @@ function cardFor(title) {
   card.append(poster, body, save);
   return card;
 }
-function adSlot() {
-  const slot = element('div', undefined, 'ad-slot ad-infeed');
-  slot.setAttribute('aria-hidden','true');
-  slot.append(element('span','Advertisement','ad-label'));
-  return slot;
-}
 function titleGenres(title) {
   return Array.isArray(title.tmdb?.genres) && title.tmdb.genres.length ? title.tmdb.genres : ['Unverified'];
 }
@@ -649,8 +643,7 @@ function weeklyGroupsContent(found) {
     list.setAttribute('aria-label',data.label+' titles');
     const limit=weeklyLimits.get(data.key)||PAGE_SIZE;
     const shown=Math.min(limit,data.titles.length);
-    const adAfter=window.matchMedia('(max-width:650px)').matches?6:12;
-    data.titles.slice(0,shown).forEach((title,i)=>{const card=cardFor(title);card.setAttribute('role','listitem');card.setAttribute('aria-posinset',i+1);card.setAttribute('aria-setsize',data.titles.length);list.append(card);if(i===adAfter-1&&data.titles.length>adAfter)list.append(adSlot());});
+    data.titles.slice(0,shown).forEach((title,i)=>{const card=cardFor(title);card.setAttribute('role','listitem');card.setAttribute('aria-posinset',i+1);card.setAttribute('aria-setsize',data.titles.length);list.append(card);});
     if(data.titles.length)body.append(list);
     else{
       const note=element('div',undefined,'date-filtered');
@@ -713,7 +706,7 @@ function render() {
   $('#result-count').textContent = `${found.length} ${found.length === 1 ? 'title' : 'titles'}`;
   const weekly=view==='weekly'?weeklyGroupsContent(found):null;
   const content=weekly?weekly.content:[];
-  if(!weekly){const adAfter=window.matchMedia('(max-width:650px)').matches?6:12;found.slice(0,visibleLimit).forEach((title,index)=>{const card=cardFor(title);card.setAttribute('role','listitem');card.setAttribute('aria-posinset',index+1);card.setAttribute('aria-setsize',found.length);content.push(card);if(index===adAfter-1&&found.length>adAfter)content.push(adSlot());});}
+  if(!weekly){found.slice(0,visibleLimit).forEach((title,index)=>{const card=cardFor(title);card.setAttribute('role','listitem');card.setAttribute('aria-posinset',index+1);card.setAttribute('aria-setsize',found.length);content.push(card);});}
   $('#catalog').setAttribute('role',!weekly&&found.length?'list':'group');
   $('#catalog').replaceChildren(...(content.length ? content : [emptyState()]));
   updateSaveAvailability();
