@@ -220,11 +220,14 @@ def build(root=ROOT, now=None):
     urls = ['/']
     navigation = '<a href="/">Dashboard</a><a href="/this-week/">This week</a>' + ''.join(f'<a href="/languages/{lang.lower()}/">{lang}</a>' for lang in LANGUAGES)
     navigation += '<a href="/guides/">Guides</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a>'
+    guide_navigation = '<a href="/">Dashboard</a><a href="/this-week/">This week</a><a href="/guides/">Guides</a><a href="/audio-description/">Audio description</a>'
     def page(path, title, description, content, work=None, indexable=True):
         canonical = BASE + path
         structured = json_script(schema_graph(path,title,description,work))
         robots = '' if indexable else '<meta name="robots" content="noindex,follow">'
-        page_class = 'seo-page guide-page' if path.startswith('/guides/') else 'seo-page'
+        is_guide = path.startswith('/guides/')
+        page_class = 'seo-page guide-page' if is_guide else 'seo-page'
+        page_navigation = guide_navigation if is_guide else navigation
         markup = f'''<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)} | OTTScout</title><meta name="description" content="{escape(description,quote=True)}">
@@ -238,7 +241,7 @@ def build(root=ROOT, now=None):
 {structured}{theme_script}<link rel="stylesheet" href="/style.css?v=streaming-guides1"></head><body>
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="site-header"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><span class="region">Streaming in India</span><button class="theme-toggle" type="button" aria-label="Switch to light mode"><span class="sun-icon" aria-hidden="true">☼</span><span class="moon-icon" aria-hidden="true">◐</span></button></header>
-<nav class="seo-nav seo-navigation" aria-label="Browse streaming">{navigation}</nav><main id="main" class="{page_class}" tabindex="-1">
+<nav class="seo-nav seo-navigation" aria-label="Browse streaming">{page_navigation}</nav><main id="main" class="{page_class}" tabindex="-1">
 <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">OTTScout</a><span aria-hidden="true"> / </span><span aria-current="page">{escape(title)}</span></nav>
 <h1>{escape(title)}</h1><p class="seo-description">{escape(description)}</p>{content}
 <section class="credits" aria-label="Data credits"><h2>Data credits</h2><a href="https://www.themoviedb.org"><img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg" width="56" height="40" alt="TMDB"></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></main>
