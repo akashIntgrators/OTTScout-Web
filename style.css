@@ -175,10 +175,12 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .primary-platform img { display:block; width:76px; height:32px; object-fit:contain; border-radius:4px; }
 .primary-offer-label,.rental-label { display:inline-block; padding:2px 7px; border-radius:4px; background:var(--raised); color:var(--text); font-size:0.75rem; line-height:1.5; }
 .rental-label { background:var(--rental-bg); color:var(--rental-text); white-space:nowrap; vertical-align:middle; }
+.card-body > .rental-label { margin-top:5px; }
 .card-languages,.card-audio { display:block; margin-top:5px; color:var(--muted); font-size:0.875rem; font-weight:400; line-height:1.45; }
 .card-title .card-languages { display:inline; font-size:0.875rem; }
 .save { position:absolute; top:8px; right:7px; display:grid; place-items:center; width:36px; min-height:40px; padding:5px; border:0; border-radius:5px; background:transparent; color:var(--muted); font-size:1.375rem; line-height:1; }
 .save:hover { color:var(--text); background:var(--raised); }
+.save:focus-visible { outline:3px solid #fff; outline-offset:2px; box-shadow:0 0 0 2px #000; }
 .save[aria-pressed="true"] { color:var(--accent); }
 .save svg { width:21px; height:21px; }
 .watch-options { margin-top:3px; }
@@ -190,7 +192,10 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .provider { display:block; min-height:36px; color:var(--accent); font-size:0.875rem; font-weight:600; }
 .offer-type,.audio,.original-language,.checked-date,.verification-note,.ad-report { margin-top:7px; color:var(--muted); font-size:0.875rem; line-height:1.5; }
 .verification-note a,.ad-report a { text-decoration:underline; }
-.report-button,.dismiss-title { display:block; min-height:40px; padding:8px 0; border:0; background:transparent; color:var(--muted); font-size:0.875rem; text-decoration:underline; text-align:left; }
+.card-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-top:12px; }
+.card-actions .provider { display:inline-flex; align-items:center; }
+.report-button { min-height:40px; padding:8px 12px; border:1px solid var(--control); border-radius:5px; background:var(--raised); color:var(--text); font-size:0.875rem; text-align:left; }
+.dismiss-title { display:block; min-height:40px; padding:8px 0; border:0; background:transparent; color:var(--muted); font-size:0.875rem; text-decoration:underline; text-align:left; }
 .weekly-label,.addition-label,.leaving-label { margin-top:5px; color:var(--muted); font-size:0.875rem; line-height:1.4; }
 .empty { grid-column:1/-1; padding:32px 0; }
 .empty h2 { font-size:1.5rem; font-weight:650; }

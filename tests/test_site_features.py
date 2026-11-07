@@ -25,6 +25,23 @@ class HTMLAudit(HTMLParser):
         if tag=='meta':self.metadata[a.get('property') or a.get('name')]=a.get('content')
 
 class SiteFeatureTests(unittest.TestCase):
+    def test_filter_help_is_exposed_to_screen_readers(self):
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__();self.by_id={}
+            def handle_starttag(self,tag,attrs):
+                item=dict(attrs)
+                if item.get('id'):self.by_id[item['id']]=(tag,item)
+        page=Controls();page.feed((Path(__file__).parents[1]/'index.html').read_text())
+        for name in ('original-only','subscription-only'):
+            tag,control=page.by_id[name]
+            self.assertEqual(tag,'input')
+            self.assertEqual(control.get('type'),'checkbox')
+            self.assertTrue(control.get('aria-labelledby'))
+            self.assertTrue(control.get('aria-describedby'))
+            self.assertIn(control['aria-labelledby'],page.by_id)
+            self.assertIn(control['aria-describedby'],page.by_id)
+
     def assert_brand_identity(self,text):
         audit=HTMLAudit();audit.feed(text)
         self.assertEqual(len(audit.brand_links),2)
