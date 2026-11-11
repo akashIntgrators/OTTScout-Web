@@ -72,7 +72,9 @@ class AccountPagesTests(unittest.TestCase):
         for detail in ('without signing in or installing', 'same Google account or email/password',
                        'Confirm account deletion', 'Never email your password',
                        'no automatic expiry', 'Separate guest saves are kept',
-                       'does not delete your Google account'):
+                       'does not delete your Google account', 'Android or iPhone app',
+                       'Keychain sign-in data can survive reinstallation',
+                       'public catalogue caches'):
             self.assertIn(detail, text)
 
     def test_privacy_covers_native_and_web_storage_and_distinguishes_ad_builds(self):
@@ -84,10 +86,12 @@ class AccountPagesTests(unittest.TestCase):
             if link.startswith('#'):
                 self.assertIn(link[1:], audit.ids)
         text = ' '.join(audit.text)
-        for detail in ('Android apps', 'Expo SecureStore', 'pending saved-title changes',
+        for detail in ('Android apps', 'iPhone app', 'Apple Watch', 'Wear OS',
+                       'Expo SecureStore', 'iOS Keychain', 'pending saved-title changes',
                        'Firebase Authentication', 'Google Cloud Firestore',
                        'Ad-free Android Play testing builds exclude',
-                       'older 0.4.0 Android phone developer test build',
+                       'Local Android phone developer test builds include Google demo ads',
+                       'widgets and watch views add no analytics or advertising requests',
                        'currently has no automatic expiry', 'does not remotely erase local copies on other devices'):
             self.assertIn(detail, text)
 

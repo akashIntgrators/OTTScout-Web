@@ -101,9 +101,9 @@ class WidgetFeedTests(unittest.TestCase):
             self.assertNotIn('privateIgnoredField', result)
             self.assertEqual((root / 'data/catalog.json').read_text(), original)
             privacy = (site / 'privacy/index.html').read_text()
-            self.assertIn('home-screen widget stores a public weekly-catalogue snapshot', privacy)
-            self.assertIn('does not read your account, sign-in credentials or watchlist', privacy)
-            self.assertIn('widget adds no analytics or advertising requests', privacy)
+            self.assertIn('home-screen widgets store a public weekly-catalogue snapshot', privacy)
+            self.assertIn('Widgets do not read your account, sign-in credentials or watchlist', privacy)
+            self.assertIn('widgets and watch views add no analytics or advertising requests', privacy)
 
 
 if __name__ == '__main__':

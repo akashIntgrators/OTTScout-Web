@@ -16,6 +16,9 @@ class DiscoveryBuildTests(unittest.TestCase):
             for name in ('index.html','app.js','style.css','CNAME'):
                 (root/name).write_text('')
             (root/'favicon.ico').write_bytes(b'icon fixture')
+            seller_record = (Path(__file__).parents[1] / 'app-ads.txt').read_text()
+            self.assertEqual(seller_record, 'google.com, pub-7509184674593498, DIRECT, f08c47fec0942fa0\n')
+            (root/'app-ads.txt').write_text(seller_record)
             (root/'theme.js').write_text('// local appearance preference fixture')
             (root/'data').mkdir()
             titles = [{'id':'motn:42','title':'A & <Movie>','type':'Movie','year':2026,'originalLanguage':'Kannada','weekly':True,'weeklyUpdatedAt':1000000,'weeklyPlatforms':['Netflix'],'offers':[{'platform':'Netflix','type':'subscription','audio':['Hindi'],'subtitles':['English'],'link':'javascript:alert(1)'}]}, {'id':'motn:43','title':'Older title','type':'Series','weekly':True,'weeklyUpdatedAt':1,'weeklyPlatforms':['Netflix'],'offers':[{'platform':'Netflix','audio':['English'],'subtitles':[]}]}]
@@ -29,6 +32,7 @@ class DiscoveryBuildTests(unittest.TestCase):
             (root/'.state').mkdir(); (root/'.state/secret').write_text('private')
             site = module.build(root, now=1000001)
             self.assertEqual((site/'favicon.ico').read_bytes(),b'icon fixture')
+            self.assertEqual((site/'app-ads.txt').read_text(),seller_record)
             self.assertEqual((site/'theme.js').read_text(),'// local appearance preference fixture')
             movie = (site/'titles/42/index.html').read_text()
             self.assertIn('A &amp; &lt;Movie&gt;', movie)
