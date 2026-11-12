@@ -23,7 +23,7 @@
   <title>OTTScout — Where to watch movies and series in India</title>
   <link rel="canonical" href="https://ottscout.techiwithhelmet.com/">
   <script src="/theme.js?v=rail22"></script>
-  <link rel="stylesheet" href="style.css?v=streaming-guides1">
+  <link rel="stylesheet" href="style.css?v=share1">
 </head>
 <body class="dashboard">
   <a class="skip-link" href="#catalog-section">Skip to titles</a>
@@ -79,6 +79,13 @@
   <div class="content">
   <main id="main" tabindex="-1">
     <div class="notice" id="catalog-status" hidden></div>
+    <section id="recommendation" class="recommendation" aria-labelledby="recommendation-heading" hidden>
+      <h2 id="recommendation-heading">Shared recommendation</h2>
+      <div class="recommendation-preview"><img id="recommendation-poster" alt="" width="72" height="108" hidden><div><h3 id="recommendation-title" tabindex="-1">Loading this recommendation…</h3><p id="recommendation-meta" hidden></p></div></div>
+      <p id="recommendation-description">Checking the loaded India catalogue.</p>
+      <div class="recommendation-actions"><button id="recommendation-approve" type="button" hidden>Add to my watchlist</button><button id="recommendation-decline" type="button">Decline</button><a id="recommendation-app" hidden>Open in OTTScout app</a></div>
+      <p id="recommendation-feedback" role="status" aria-live="polite" aria-atomic="true"></p>
+    </section>
     <section id="catalog-section" tabindex="-1" aria-labelledby="heading" class="catalog-section" data-ready="false">
         <div id="active-filters" class="active-filters" role="group" aria-label="Active filters"></div>
         <div class="browse-toolbar"><nav class="view-tabs" aria-label="Catalog views"><button class="active" data-view="weekly" type="button" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg>New this week <span id="weekly-count">0</span></button><button data-view="discover" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>All titles</button><button data-view="leaving" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>Leaving soon <span id="leaving-count">0</span></button><button data-view="watchlist" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4Z"/></svg>Saved <span id="count">0</span></button></nav><div class="content-controls"><div id="type" class="type-toggle" role="group" aria-label="Content type"><button type="button" data-type="all" aria-pressed="true">All</button><button type="button" data-type="Movie" aria-pressed="false">Movies</button><button type="button" data-type="Series" aria-pressed="false">Series</button></div><button id="pick-one" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01"/></svg>Pick one for me</button></div></div>
@@ -131,7 +138,7 @@
     <p id="account-feedback" role="status" aria-live="polite" aria-atomic="true"></p>
     <div class="account-footer"><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account help</a><button id="account-continue" type="button">Continue as guest</button></div>
   </dialog>
-  <script src="app.js?v=streaming-guides1"></script>
+  <script src="app.js?v=share1"></script>
   <script type="module" src="/account.js?v=accounts1"></script>
   <script src="/analytics.js?v=2" defer></script>
 </body>

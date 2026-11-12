@@ -193,6 +193,10 @@ def build(root=ROOT, now=None):
     target.mkdir()
     for name in ('index.html', 'app.js', 'style.css', 'CNAME'):
         shutil.copy2(root / name, target / name)
+    recommendation_module = root / 'web/recommendation-links.js'
+    if recommendation_module.exists():
+        (target / 'web').mkdir(exist_ok=True)
+        shutil.copy2(recommendation_module, target / 'web/recommendation-links.js')
     if (root / 'app-ads.txt').exists():
         shutil.copy2(root / 'app-ads.txt', target / 'app-ads.txt')
     if (root / 'web/account.js').exists():
