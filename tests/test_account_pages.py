@@ -91,9 +91,20 @@ class AccountPagesTests(unittest.TestCase):
                        'Firebase Authentication', 'Google Cloud Firestore',
                        'Ad-free Android Play testing builds exclude',
                        'Local Android phone developer test builds include Google demo ads',
+                       'Standard iPhone builds, including ad-free TestFlight betas, also exclude it',
+                       'Selected owner-only iPhone TestFlight betas also include Google demo ads',
+                       'Google sample IDs and cannot earn revenue',
+                       'Non-personalized requests do not mean no data collection',
+                       'User Messaging Platform (UMP)', 'device identifiers', 'consent choices',
+                       'Ad privacy choices is available when UMP requires it',
+                       'selected owner-only TestFlight betas also enable Google sign-in',
+                       'Sign in with Apple is not enabled while its provider setup is pending',
                        'widgets and watch views add no analytics or advertising requests',
                        'currently has no automatic expiry', 'does not remotely erase local copies on other devices'):
             self.assertIn(detail, text)
+        self.assertNotIn('Android TV, iPhone, Apple Watch and Wear OS builds also exclude that SDK', text)
+        self.assertFalse(any('adsbygoogle' in script or 'googlesyndication' in script for script in audit.scripts),
+                         'A disclosure change must not add an advertising loader to the website')
 
     def test_both_routes_are_in_sitemap_and_information_navigation(self):
         sitemap = (self.site / 'sitemap.xml').read_text()
