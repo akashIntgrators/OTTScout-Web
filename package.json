@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node scripts/build-auth.mjs && python3 -m http.server 5174 --bind 127.0.0.1",
     "brand:assets": "node scripts/build_brand_assets.mjs",
-    "check": "node --check app.js && node --check web/account.js && node --check web/watchlist-sync.js && node --check web/account-session.js",
+    "check": "node --check app.js && node --check web/account.js && node --check web/watchlist-sync.js && node --check web/account-session.js && node --check web/recommendation-links.js",
     "test": "python3 -m unittest discover -s tests -v",
     "build": "python3 scripts/build_site.py",
     "build:auth": "node scripts/build-auth.mjs",

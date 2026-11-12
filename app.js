@@ -48,6 +48,7 @@ const dismissed = new Set(readList('ottscout-dismissed') || []);
 const saved = new Set(readList('ottscout-watchlist') || []);
 let accountToggleInProgress=false;
 let accountWatchlistState=null;
+let recommendationReceiver=null;
 const legacyExcluded = readList('ottscout-excluded-platforms') || [];
 const selectedPlatforms = new Set((readList('ottscout-platforms') || platforms.filter(name => !legacyExcluded.includes(name))).filter(name => platforms.includes(name)));
 const selectedLanguages = new Set((readList('ottscout-languages') || languages).filter(name => languages.includes(name)));
@@ -794,6 +795,7 @@ function handleGlobalKeydown(event,menus) {
 function applyAccountWatchlistState(state) {
   if (!(state?.ids instanceof Set)) return;
   accountWatchlistState=state;
+  recommendationReceiver?.refresh();
   const changed=saved.size!==state.ids.size || [...saved].some(id=>!state.ids.has(id));
   if(!changed){updateSaveAvailability();return;}
   saved.clear();state.ids.forEach(id=>saved.add(id));
@@ -891,6 +893,47 @@ async function loadCatalog() {
   }
 }
 loadCatalog();
+
+// A shared recommendation is reviewed separately from the receiver's filters.
+// No sender identity or account ID is accepted from the URL.
+async function setupRecommendationReceiver() {
+  if (!new URL(window.location.href).searchParams.has('recommend') || !$('#recommendation')) return;
+  try {
+    const {mountRecommendation}=await import('./web/recommendation-links.js?v=share1');
+    const currentState=()=>{
+      const state=window.OTTScoutAccount?.state();
+      const pending=!state || !(state.ids instanceof Set) || (!state.uid && !state.ready);
+      return {uid:state?.uid || null,ids:state?.ids instanceof Set?state.ids:new Set(),canSave:!pending && state.canSave!==false,
+        reason:pending?'Your watchlist is still loading. Please try again shortly.':watchlistSaveReason()};
+    };
+    recommendationReceiver=mountRecommendation($('#recommendation'),{
+      url:window.location.href,
+      allowLocalPreview:['localhost','127.0.0.1'].includes(window.location.hostname),
+      getCatalogue:()=>({ready:$('#catalog-section').dataset.ready==='true',catalogue:liveCatalog}),
+      getState:currentState,
+      write:(id,expectedUid)=>{
+        const state=currentState();
+        if(state.uid!==expectedUid || state.reason || !state.canSave)return false;
+        if(state.ids.has(id))return true;
+        accountToggleInProgress=true;
+        try{return window.OTTScoutAccount.toggle(id);}finally{accountToggleInProgress=false;}
+      },
+      onSaved:()=>render(),
+      onClose:()=>{
+        const url=new URL(window.location.href);url.searchParams.delete('recommend');
+        try{window.history.replaceState(null,'',url.href);}catch{/* Browsing still works when history is unavailable. */}
+        $('#heading').focus();
+      },
+    });
+  }catch{
+    const panel=$('#recommendation');panel.hidden=false;
+    $('#recommendation-title').textContent='Recommendation unavailable';
+    $('#recommendation-description').textContent='This recommendation could not load. Refresh the page to try again.';
+    $('#recommendation-decline').onclick=()=>{panel.hidden=true;$('#heading').focus();};
+  }
+}
+document.addEventListener('ottscout:ready',()=>recommendationReceiver?.refresh());
+setupRecommendationReceiver();
 
 window.addEventListener('ottscout:watchlist',event=>applyAccountWatchlistState(event.detail));
 window.dispatchEvent(new Event('ottscout:watchlist-request'));
