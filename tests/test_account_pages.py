@@ -86,7 +86,10 @@ class AccountPagesTests(unittest.TestCase):
             if link.startswith('#'):
                 self.assertIn(link[1:], audit.ids)
         text = ' '.join(audit.text)
-        for detail in ('Android apps', 'iPhone app', 'Apple Watch', 'Wear OS',
+        for detail in ('Android apps', 'iPhone app', 'Apple TV app', 'Apple Watch', 'Wear OS',
+                       'Android TV and Apple TV use a local guest watchlist',
+                       'tvOS can clear cached files, including local saved titles',
+                       'TV saves are not backed up to an OTTScout account',
                        'Expo SecureStore', 'iOS Keychain', 'pending saved-title changes',
                        'Firebase Authentication', 'Google Cloud Firestore',
                        'Ad-free Android Play testing builds exclude',
