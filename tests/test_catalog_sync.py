@@ -56,6 +56,76 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(normalized['offers'][0]['audio'], ['Hindi'])
         self.assertIsNone(sync.normalize(show(), {'Netflix':'netflix'}, NOW)['originalLanguage'])
 
+    def test_stale_show_cannot_replace_newer_evidence_but_still_requires_valid_input(self):
+        mapping={'Netflix':'netflix','Prime Video':'prime'}
+        current=show('fresh',audio='eng',services=('prime',))
+        current['title']='Newer title'
+        self.assertEqual(sync.save_show(self.db,current,mapping,NOW),1)
+        before=self.db.execute("SELECT body,first_seen,last_checked FROM titles WHERE id='motn:fresh'").fetchone()
+        stale=show('fresh')
+        stale['streamingOptions']['in'][0]['type']='rent'
+        self.assertEqual(sync.save_show(self.db,stale,mapping,NOW-100),0)
+        self.assertEqual(self.db.execute("SELECT body,first_seen,last_checked FROM titles WHERE id='motn:fresh'").fetchone(),before)
+        invalid=copy.deepcopy(stale)
+        invalid['streamingOptions']['in'][0]['type']='invalid'
+        with self.assertRaises(sync.SyncError):
+            sync.save_show(self.db,invalid,mapping,NOW-100)
+        self.assertEqual(self.db.execute("SELECT body,first_seen,last_checked FROM titles WHERE id='motn:fresh'").fetchone(),before)
+
+    def test_equal_and_newer_show_snapshots_keep_existing_update_semantics(self):
+        mapping={'Netflix':'netflix'}
+        original=show('same')
+        self.assertEqual(sync.save_show(self.db,original,mapping,NOW),1)
+        self.assertEqual(sync.save_show(self.db,original,mapping,NOW),0)
+        equal=copy.deepcopy(original);equal['title']='Equal-time correction'
+        self.assertEqual(sync.save_show(self.db,equal,mapping,NOW),1)
+        newer=copy.deepcopy(original);newer['title']='Latest title'
+        self.assertEqual(sync.save_show(self.db,newer,mapping,NOW+100),1)
+        raw,first_seen,checked=self.db.execute("SELECT body,first_seen,last_checked FROM titles WHERE id='motn:same'").fetchone()
+        self.assertEqual((json.loads(raw)['title'],first_seen,checked),('Latest title',NOW,NOW+100))
+
+    def test_older_staged_maintenance_cannot_overwrite_new_feed_but_keeps_its_events_and_watermark(self):
+        mapping={'Netflix':'netflix','Prime Video':'prime'}
+        for index,kind in enumerate(('updated','removed')):
+            with self.subTest(kind=kind):
+                old_time=NOW+index*sync.DAY;new_time=old_time+100
+                sync.set_meta(self.db,'baseline_complete',NOW-1000)
+                sync.set_meta(self.db,'watermark:'+kind,old_time-100)
+                sync.set_meta(self.db,'watermark:new',old_time-100)
+                self.db.commit()
+                older=show(kind)
+                older['title']='Old maintenance title'
+                older['streamingOptions']['in'][0]['type']='rent'
+                class OldFirst:
+                    calls=0
+                    def get(inner,endpoint,params):
+                        inner.calls+=1
+                        if inner.calls>1:raise sync.BudgetReached('fixture run cap')
+                        return {'shows':{kind:older},'changes':[{'showId':kind,'service':{'id':'netflix'},'timestamp':old_time-10}],
+                                'hasMore':True,'nextCursor':'finish-'+kind}
+                with self.assertRaises(sync.BudgetReached):
+                    sync.sync_change_feed(self.db,OldFirst(),mapping,kind,NOW-1000,old_time)
+                self.db.rollback()
+                newer=show(kind,audio='eng',services=('prime',));newer['title']='Fresh new-feed title'
+                class NewFeed:
+                    def get(inner,endpoint,params):
+                        return {'shows':{kind:newer},'changes':[{'showId':kind,'service':{'id':'prime'},'timestamp':new_time-10}],'hasMore':False}
+                self.assertEqual(sync.sync_change_feed(self.db,NewFeed(),mapping,'new',NOW-1000,new_time),1)
+                before=self.db.execute('SELECT body,first_seen,last_checked FROM titles WHERE id=?',('motn:'+kind,)).fetchone()
+                class OldFinal:
+                    def get(inner,endpoint,params):
+                        self.assertEqual((params['cursor'],params['to']),('finish-'+kind,old_time))
+                        return {'shows':{},'changes':[],'hasMore':False}
+                self.assertEqual(sync.sync_change_feed(self.db,OldFinal(),mapping,kind,NOW-1000,new_time+100),0)
+                after=self.db.execute('SELECT body,first_seen,last_checked FROM titles WHERE id=?',('motn:'+kind,)).fetchone()
+                self.assertEqual(after,before)
+                self.assertEqual((json.loads(after[0])['offers'][0]['platform'],after[2]),('Prime Video',new_time))
+                self.assertEqual(sync.get_meta(self.db,'watermark:'+kind),old_time)
+                self.assertEqual(sync.get_meta(self.db,'watermark:new'),new_time)
+                self.assertIsNone(sync.get_meta(self.db,'change_window_v2:'+kind))
+                self.assertEqual(self.db.execute('SELECT count(*) FROM change_pages WHERE kind=?',(kind,)).fetchone()[0],0)
+                self.assertEqual(self.db.execute('SELECT at FROM events WHERE title_id=? AND kind=?',('motn:'+kind,kind)).fetchone()[0],old_time-10)
+
     def test_full_catalog_resumes_and_does_not_create_weekly_events(self):
         class Pages:
             calls = 0
