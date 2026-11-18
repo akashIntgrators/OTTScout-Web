@@ -462,6 +462,48 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(network.call_count,2)
         self.assertEqual((sync.request_budget(self.db,NOW)['requestsUsed'],sync.new_feed_requests_today(self.db,NOW)),(371,2))
 
+    def test_shared_allowance_migrates_existing_same_day_new_pages_and_title_ledger_attempts(self):
+        self.prepared_catalogue();self.attempts(NOW-1,368)
+        legacy={'utcDay':NOW//sync.DAY,'attempts':1}
+        sync.set_meta(self.db,'new_feed_attempts_v1',legacy)
+        self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)',(NOW,'/shows/search/title',503))
+        self.db.commit()
+        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen') as network:
+            self.assertEqual(sync.request_budget(self.db,NOW)['newFeedRequestsToday'],2)
+            for endpoint,params in [('/changes',{'change_type':'new'}),('/shows/search/title',{'title':'Missing'})]:
+                with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
+                    sync.Client(self.db,'fixture-not-a-key').get(endpoint,params)
+            network.assert_not_called()
+        self.assertEqual(sync.get_meta(self.db,'new_feed_attempts_v1'),legacy)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],369)
+
+    def test_first_title_request_initializes_shared_counter_once_without_double_counting_its_ledger_row(self):
+        self.prepared_catalogue();self.attempts(NOW-1,369)
+        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',return_value=Response([])) as network:
+            sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Missing'})
+            self.assertEqual(sync.new_feed_requests_today(self.db,NOW),1)
+            self.assertEqual(sync.get_meta(self.db,'new_release_attempts_v2'),{'utcDay':NOW//sync.DAY,'attempts':1})
+            sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+            self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
+            with self.assertRaises(sync.BudgetReached):
+                sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Another'})
+        self.assertEqual(network.call_count,2)
+        self.assertEqual(sync.request_budget(self.db,NOW)['requestsUsed'],371)
+
+    def test_shared_counter_rolls_to_next_utc_day_without_recounting_yesterday_or_removing_history(self):
+        self.prepared_catalogue();self.attempts(NOW-1,368)
+        self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)',(NOW,'/shows/search/title',0))
+        sync.set_meta(self.db,'new_feed_attempts_v1',{'utcDay':NOW//sync.DAY,'attempts':1})
+        sync.set_meta(self.db,'new_release_attempts_v2',{'utcDay':NOW//sync.DAY,'attempts':2})
+        self.db.commit()
+        tomorrow=(NOW//sync.DAY+1)*sync.DAY
+        self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),0)
+        with patch.object(sync.time,'time',return_value=tomorrow),patch.object(sync,'urlopen',return_value=Response([])):
+            sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Missing'})
+        self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),1)
+        self.assertEqual(sync.get_meta(self.db,'new_release_attempts_v2'),{'utcDay':tomorrow//sync.DAY,'attempts':1})
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],370)
+
     def test_optional_malformed_lookup_keeps_completed_new_feed_and_runs_before_maintenance(self):
         self.prepared_catalogue();self.attempts(NOW-1,369)
         sync.set_meta(self.db,'watermark:new',NOW-sync.DAY);self.db.commit()

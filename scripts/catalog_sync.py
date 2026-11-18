@@ -60,8 +60,17 @@ def set_meta(db, key, value):
     db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(value)))
 
 def new_feed_requests_today(db, now):
-    counted = get_meta(db, 'new_feed_attempts_v1', {})
-    return counted.get('attempts', 0) if counted.get('utcDay') == now // DAY else 0
+    day = now // DAY
+    counted = get_meta(db, 'new_release_attempts_v2', {})
+    if counted.get('utcDay') == day:
+        return counted.get('attempts', 0)
+    # Before v2, v1 counted new-feed pages but not title searches. Seed the
+    # shared allowance from both durable sources; never rewrite the ledger.
+    legacy = get_meta(db, 'new_feed_attempts_v1', {})
+    pages = legacy.get('attempts', 0) if legacy.get('utcDay') == day else 0
+    lookups = db.execute('SELECT count(*) FROM requests WHERE endpoint=? AND at>=? AND at<?',
+                         ('/shows/search/title', day*DAY, (day+1)*DAY)).fetchone()[0]
+    return pages + lookups
 
 def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
     """Only bulk-import the allowance above a reserve for the rest of this UTC month."""
@@ -208,7 +217,9 @@ class Client:
         row = self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,0)', (now, endpoint))
         request_id = row.lastrowid
         if fresh_request:
-            set_meta(self.db, 'new_feed_attempts_v1', {'utcDay':now//DAY, 'attempts':new_feed_requests_today(self.db, now)+1})
+            # Use the pre-insert budget: the just-inserted title ledger row must
+            # not be counted once by migration and again by this increment.
+            set_meta(self.db, 'new_release_attempts_v2', {'utcDay':now//DAY, 'attempts':budget['newFeedRequestsToday']+1})
         self.db.commit()
         self.calls += 1
         headers = {'Accept': 'application/json'}
