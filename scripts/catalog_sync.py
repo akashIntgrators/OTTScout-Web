@@ -28,7 +28,7 @@ MONTHLY_REQUEST_CAP = 400
 RUN_REQUEST_CAP = 12
 MAINTENANCE_REQUESTS_PER_DAY = 8
 BACKFILL_HEADROOM = 20
-CONSERVATION_NEW_PAGES_PER_DAY = 2
+CONSERVATION_NEW_REQUESTS_PER_DAY = 2
 
 class SyncError(Exception):
     pass
@@ -60,8 +60,17 @@ def set_meta(db, key, value):
     db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(value)))
 
 def new_feed_requests_today(db, now):
-    counted = get_meta(db, 'new_feed_attempts_v1', {})
-    return counted.get('attempts', 0) if counted.get('utcDay') == now // DAY else 0
+    day = now // DAY
+    counted = get_meta(db, 'new_release_attempts_v2', {})
+    if counted.get('utcDay') == day:
+        return counted.get('attempts', 0)
+    # Before v2, v1 counted new-feed pages but not title searches. Seed the
+    # shared allowance from both durable sources; never rewrite the ledger.
+    legacy = get_meta(db, 'new_feed_attempts_v1', {})
+    pages = legacy.get('attempts', 0) if legacy.get('utcDay') == day else 0
+    lookups = db.execute('SELECT count(*) FROM requests WHERE endpoint=? AND at>=? AND at<?',
+                         ('/shows/search/title', day*DAY, (day+1)*DAY)).fetchone()[0]
+    return pages + lookups
 
 def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
     """Only bulk-import the allowance above a reserve for the rest of this UTC month."""
@@ -78,12 +87,12 @@ def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
     return {'monthlyLimit': limit, 'requestsUsed': used, 'requestsRemaining': remaining,
             'freshnessReserve': reserve, 'backfillAvailable': max(0, remaining-reserve),
             'headroom': BACKFILL_HEADROOM, 'maintenanceRequestsPerDay': MAINTENANCE_REQUESTS_PER_DAY,
-            'conservationMode': conserving, 'newFeedDailyLimit': CONSERVATION_NEW_PAGES_PER_DAY if conserving else None,
+            'conservationMode': conserving, 'newFeedDailyLimit': CONSERVATION_NEW_REQUESTS_PER_DAY if conserving else None,
             'newFeedRequestsToday': new_attempts,
-            'newFeedRequestsRemainingToday': max(0, CONSERVATION_NEW_PAGES_PER_DAY-new_attempts) if conserving else None}
+            'newFeedRequestsRemainingToday': max(0, CONSERVATION_NEW_REQUESTS_PER_DAY-new_attempts) if conserving else None}
 
 def change_feed_due(db, kind, now, conservation=False):
-    if conservation and (kind != 'new' or new_feed_requests_today(db, now) >= CONSERVATION_NEW_PAGES_PER_DAY):
+    if conservation and (kind != 'new' or new_feed_requests_today(db, now) >= CONSERVATION_NEW_REQUESTS_PER_DAY):
         return False
     # Resume interrupted windows immediately; their saved query may be older than
     # the normal cadence. Daily maintenance preserves quota for older titles.
@@ -103,7 +112,7 @@ def streaming_freshness(db, now, conservation=False):
         feeds[kind] = {'completedThrough': stamp(watermark) if watermark is not None else None,
                        'pendingWindow': {'from':stamp(pending['from']), 'to':stamp(pending['to']), 'pages':pending['pages']} if pending else None,
                        'checkDue': change_feed_due(db, kind, now, conservation),
-                       'deferredByConservation': conservation and (kind != 'new' or new_feed_requests_today(db, now) >= CONSERVATION_NEW_PAGES_PER_DAY)}
+                       'deferredByConservation': conservation and (kind != 'new' or new_feed_requests_today(db, now) >= CONSERVATION_NEW_REQUESTS_PER_DAY)}
     return feeds
 
 def update_complete_watermark(db):
@@ -201,14 +210,16 @@ class Client:
         budget = request_budget(self.db, now, self.monthly_limit)
         if budget['requestsRemaining'] <= 0 or self.calls >= self.run_limit:
             raise BudgetReached('Configured request limit reached; resume on a later run or adjust budget')
-        new_page = endpoint == '/changes' and (params or {}).get('change_type') == 'new'
-        if new_page and budget['conservationMode'] and budget['newFeedRequestsRemainingToday'] <= 0:
-            raise BudgetReached('Quota conservation: two new-release pages attempted today; resume next UTC day')
+        fresh_request = endpoint == '/shows/search/title' or (endpoint == '/changes' and (params or {}).get('change_type') == 'new')
+        if fresh_request and budget['conservationMode'] and budget['newFeedRequestsRemainingToday'] <= 0:
+            raise BudgetReached('Quota conservation: two new-release requests attempted today; resume next UTC day')
         # Count and commit before sending, including network failures and malformed responses.
         row = self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,0)', (now, endpoint))
         request_id = row.lastrowid
-        if new_page:
-            set_meta(self.db, 'new_feed_attempts_v1', {'utcDay':now//DAY, 'attempts':new_feed_requests_today(self.db, now)+1})
+        if fresh_request:
+            # Use the pre-insert budget: the just-inserted title ledger row must
+            # not be counted once by migration and again by this increment.
+            set_meta(self.db, 'new_release_attempts_v2', {'utcDay':now//DAY, 'attempts':budget['newFeedRequestsToday']+1})
         self.db.commit()
         self.calls += 1
         headers = {'Accept': 'application/json'}
@@ -453,7 +464,7 @@ def sync_change_feed(db, client, mapping, kind, started, now):
         db.commit()
         return changed
 
-def sync(db, client, now):
+def sync(db, client, now, recheck_reports=False):
     def conserving():
         return request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))['conservationMode']
     coverage = get_meta(db, 'coverage')
@@ -504,6 +515,10 @@ def sync(db, client, now):
     for change_type in change_types:
         if change_feed_due(db, change_type, now, conserving()):
             changed += sync_change_feed(db, client, mapping, change_type, started, now)
+        if change_type == 'new' and recheck_reports:
+            # Reported gaps use a spare request after new-feed work, before bulk
+            # maintenance. Client enforces the same daily allowance for both.
+            changed += recheck_reported_titles(db, client, now)
     budget = request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))
     pages = min(budget['backfillAvailable'], max(0, min(6, int(os.environ.get('CATALOG_BACKFILL_PAGES', '6')))))
     changed += backfill_catalog(db, client, mapping, now, max_pages=pages)
@@ -623,6 +638,43 @@ def export_catalog(db, path, now):
     temporary.replace(target)
     return True
 
+def official_platform_title_id(value, platform, show_type):
+    if not isinstance(value,str): return None
+    try:
+        url=urlparse(value)
+        if url.scheme!='https' or url.username or url.password or url.port not in (None,443): return None
+        parts=url.path.strip('/').split('/')
+        if platform=='Netflix' and url.hostname in ('netflix.com','www.netflix.com'):
+            if len(parts)==2 and parts[0] in ('title','watch'): ident=parts[1]
+            elif len(parts)==3 and parts[:2] in (['in','title'],['in','watch']): ident=parts[2]
+            else:return None
+        elif platform=='JioHotstar' and url.hostname in ('hotstar.com','www.hotstar.com'):
+            if parts[-1:] == ['watch']: parts=parts[:-1]
+            category='shows' if show_type=='series' else 'movies'
+            if len(parts)!=4 or parts[:2]!=['in',category] or not parts[2] or parts[2] in ('.','..'):return None
+            ident=parts[3]
+        else:return None
+        return ident if ident.isascii() and ident.isdigit() else None
+    except ValueError:
+        return None
+
+def reported_title_identity(row):
+    if not isinstance(row,dict) or not isinstance(row.get('title'),str) or not row['title'].strip():
+        raise SyncError('Invalid reported title lookup')
+    legacy='netflixId' in row and 'platform' not in row and 'platformTitleId' not in row
+    platform='Netflix' if legacy else row.get('platform')
+    show_type='movie' if legacy else row.get('showType')
+    ident=row.get('netflixId') if legacy else row.get('platformTitleId')
+    if platform not in ('Netflix','JioHotstar') or show_type not in ('movie','series') or not isinstance(ident,str) or not ident.isascii() or not ident.isdigit():
+        raise SyncError('Invalid reported title lookup')
+    if not legacy:
+        if not isinstance(row.get('sourceURL'),str):
+            raise SyncError('Invalid reported title source')
+        source=urlparse(row['sourceURL'])
+        if source.query or source.fragment or official_platform_title_id(row.get('sourceURL'),platform,show_type)!=ident:
+            raise SyncError('Reported title source does not match its official platform identity')
+    return platform,show_type,ident
+
 def recheck_reported_titles(db, client, now, records=None):
     """One bounded title lookup per day for unresolved reports; require exact provider identity."""
     attempted = get_meta(db, 'title_recheck_last_attempt')
@@ -633,15 +685,17 @@ def recheck_reported_titles(db, client, now, records=None):
         records = json.loads(path.read_text()) if path.exists() else []
     mapping = get_meta(db, 'coverage', {}).get('mapping', {})
     if not mapping: return 0
+    conservation=request_budget(db,now,getattr(client,'monthly_limit',MONTHLY_REQUEST_CAP))['conservationMode']
+    cooldown=7*DAY if conservation else DAY
     for row in records:
-        ident = row.get('netflixId', '')
-        if not isinstance(ident,str) or not ident.isdigit() or not isinstance(row.get('title'),str):
-            raise SyncError('Invalid reported title lookup')
-        key='title_recheck:netflix:'+ident
+        platform,show_type,ident=reported_title_identity(row)
+        if platform not in mapping:continue
+        service='netflix' if platform=='Netflix' else 'hotstar'
+        key='title_recheck:'+service+':'+ident
         state=get_meta(db,key,{})
-        if state.get('resolved') or now-state.get('checkedAt',0)<DAY: continue
+        if state.get('resolved') or now-state.get('checkedAt',0)<cooldown: continue
         try:
-            results=client.get('/shows/search/title',{'title':row['title'],'country':'in','show_type':'movie','series_granularity':'show'})
+            results=client.get('/shows/search/title',{'title':row['title'],'country':'in','show_type':show_type,'series_granularity':'show'})
         except BudgetReached:
             raise
         except SyncError:
@@ -650,27 +704,35 @@ def recheck_reported_titles(db, client, now, records=None):
             db.commit()
             return 0
         set_meta(db, 'title_recheck_last_attempt', now)
+        # Persist the failed/unverified attempt before validating the response;
+        # malformed or ambiguous matches must also respect the cooldown.
+        set_meta(db,key,{'checkedAt':now,'resolved':False,'title':row['title'],'status':'lookup_failed'})
         db.commit()
-        if not isinstance(results,list): raise SyncError('Invalid title search response')
         matches=[]
-        for show in results:
-            body=normalize(show,mapping,now)
-            for offer in body['offers']:
-                url=urlparse(offer.get('link') or '')
-                if offer['platform']=='Netflix' and url.hostname in ('netflix.com','www.netflix.com') and url.path.rstrip('/').split('/')[-1]==ident:
-                    matches.append((show,body));break
-        if len(matches)>1: raise SyncError('Ambiguous provider identity in title search')
+        try:
+            if not isinstance(results,list): raise SyncError('Invalid title search response')
+            for show in results:
+                body=normalize(show,mapping,now)
+                if body['type'] != {'movie':'Movie','series':'Series'}[show_type]:continue
+                for offer in body['offers']:
+                    if offer['platform']==platform and official_platform_title_id(offer.get('link'),platform,show_type)==ident:
+                        matches.append((show,body));break
+            if len(matches)>1: raise SyncError('Ambiguous provider identity in title search')
+        except (SyncError, TypeError, AttributeError, ValueError):
+            # Optional reported-title work cannot invalidate an already completed
+            # new feed. No unverified result is saved; the failed-attempt cooldown remains.
+            return 0
         changed=0
         if matches:
             show,body=matches[0];changed=save_show(db,show,mapping,now)
             for offer in body['offers']:
                 added=offer.get('availableSince')
-                if offer['platform']=='Netflix' and type(added) is int and now-7*DAY<=added<=now:
-                    event=json.dumps(['title-recheck',body['id'],'Netflix',added])
-                    db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)',(event,body['id'],'Netflix','new',added))
+                if offer['platform']==platform and official_platform_title_id(offer.get('link'),platform,show_type)==ident and type(added) is int and now-7*DAY<=added<=now:
+                    event=json.dumps(['title-recheck',body['id'],platform,added])
+                    db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)',(event,body['id'],platform,'new',added))
         set_meta(db,key,{'checkedAt':now,'resolved':bool(matches),'title':row['title'],'matches':len(matches)})
         db.commit()
-        print('Reported title recheck: '+row['title']+' — '+('imported exact Netflix match' if matches else 'provider has no matching Netflix India offer'))
+        print('Reported title recheck: '+row['title']+' — '+('imported exact '+platform+' match' if matches else 'provider has no matching '+platform+' India offer'))
         return changed
     return 0
 
@@ -708,10 +770,9 @@ def main():
                     int(os.environ.get('MONTHLY_REQUEST_LIMIT', '400')),
                     int(os.environ.get('RUN_REQUEST_LIMIT', '12')))
     try:
-        changed = 0 if request_budget(db, now, client.monthly_limit)['conservationMode'] else recheck_reported_titles(db, client, now)
-        changed += sync(db, client, now)
+        changed = sync(db, client, now, recheck_reports=True)
         if request_budget(db, now, client.monthly_limit)['conservationMode']:
-            status, message = 'limited', 'Quota conservation: new releases checked daily (two pages per UTC day); maintenance and older imports deferred'
+            status, message = 'limited', 'Quota conservation: new releases checked daily (two feed/title requests per UTC day); maintenance and older imports deferred'
         else:
             status, message = 'success', 'Catalog check completed'
     except BudgetReached as error:

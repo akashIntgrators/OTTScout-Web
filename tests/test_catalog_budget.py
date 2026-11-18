@@ -379,9 +379,9 @@ class BudgetTests(unittest.TestCase):
         args=['catalog_sync.py','--db',str(Path(self.temp.name)/'catalog.sqlite'),'--export',str(output),'--report',str(report),'--allow-cached-on-limit']
         with patch.object(sys,'argv',args), patch.dict(os.environ,{'STREAMING_API_KEY':'fixture-not-a-key'},clear=True), \
              patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=self.reply), \
-             patch.object(sync,'recheck_reported_titles') as recheck, contextlib.redirect_stdout(io.StringIO()):
+             patch.object(sync,'recheck_reported_titles',return_value=0) as recheck, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(sync.main(),0)
-            recheck.assert_not_called()
+            recheck.assert_called_once()
         exported=json.loads(output.read_text());reported=json.loads(report.read_text())
         self.assertEqual(reported['runs'][-1]['status'],'limited')
         self.assertIn('Quota conservation',reported['runs'][-1]['message'])
@@ -449,6 +449,99 @@ class BudgetTests(unittest.TestCase):
             network.assert_not_called()
             sync.recheck_reported_titles(self.db, sync.Client(self.db, 'fixture-not-a-key'), NOW, records)
             self.assertEqual(network.call_count, 1)
+
+    def test_new_pages_and_failed_title_lookups_share_the_same_conservation_allowance(self):
+        self.prepared_catalogue();self.attempts(NOW-1,369)
+        with patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=[Response({'shows':{},'changes':[],'hasMore':False}),URLError('fixture offline')]) as network:
+            client=sync.Client(self.db,'fixture-not-a-key')
+            client.get('/changes',{'change_type':'new'})
+            with self.assertRaises(sync.SyncError):client.get('/shows/search/title',{'title':'Missing'})
+            for endpoint,params in [('/changes',{'change_type':'new'}),('/shows/search/title',{'title':'Another'})]:
+                with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
+                    sync.Client(self.db,'fixture-not-a-key').get(endpoint,params)
+        self.assertEqual(network.call_count,2)
+        self.assertEqual((sync.request_budget(self.db,NOW)['requestsUsed'],sync.new_feed_requests_today(self.db,NOW)),(371,2))
+
+    def test_shared_allowance_migrates_existing_same_day_new_pages_and_title_ledger_attempts(self):
+        self.prepared_catalogue();self.attempts(NOW-1,368)
+        legacy={'utcDay':NOW//sync.DAY,'attempts':1}
+        sync.set_meta(self.db,'new_feed_attempts_v1',legacy)
+        self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)',(NOW,'/shows/search/title',503))
+        self.db.commit()
+        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen') as network:
+            self.assertEqual(sync.request_budget(self.db,NOW)['newFeedRequestsToday'],2)
+            for endpoint,params in [('/changes',{'change_type':'new'}),('/shows/search/title',{'title':'Missing'})]:
+                with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
+                    sync.Client(self.db,'fixture-not-a-key').get(endpoint,params)
+            network.assert_not_called()
+        self.assertEqual(sync.get_meta(self.db,'new_feed_attempts_v1'),legacy)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],369)
+
+    def test_first_title_request_initializes_shared_counter_once_without_double_counting_its_ledger_row(self):
+        self.prepared_catalogue();self.attempts(NOW-1,369)
+        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',return_value=Response([])) as network:
+            sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Missing'})
+            self.assertEqual(sync.new_feed_requests_today(self.db,NOW),1)
+            self.assertEqual(sync.get_meta(self.db,'new_release_attempts_v2'),{'utcDay':NOW//sync.DAY,'attempts':1})
+            sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+            self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
+            with self.assertRaises(sync.BudgetReached):
+                sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Another'})
+        self.assertEqual(network.call_count,2)
+        self.assertEqual(sync.request_budget(self.db,NOW)['requestsUsed'],371)
+
+    def test_shared_counter_rolls_to_next_utc_day_without_recounting_yesterday_or_removing_history(self):
+        self.prepared_catalogue();self.attempts(NOW-1,368)
+        self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)',(NOW,'/shows/search/title',0))
+        sync.set_meta(self.db,'new_feed_attempts_v1',{'utcDay':NOW//sync.DAY,'attempts':1})
+        sync.set_meta(self.db,'new_release_attempts_v2',{'utcDay':NOW//sync.DAY,'attempts':2})
+        self.db.commit()
+        tomorrow=(NOW//sync.DAY+1)*sync.DAY
+        self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),0)
+        with patch.object(sync.time,'time',return_value=tomorrow),patch.object(sync,'urlopen',return_value=Response([])):
+            sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Missing'})
+        self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),1)
+        self.assertEqual(sync.get_meta(self.db,'new_release_attempts_v2'),{'utcDay':tomorrow//sync.DAY,'attempts':1})
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],370)
+
+    def test_optional_malformed_lookup_keeps_completed_new_feed_and_runs_before_maintenance(self):
+        self.prepared_catalogue();self.attempts(NOW-1,369)
+        sync.set_meta(self.db,'watermark:new',NOW-sync.DAY);self.db.commit()
+        records=[{'title':'Mr & Mrs Office','platform':'JioHotstar','showType':'series','platformTitleId':'1271718279',
+                  'sourceURL':'https://www.hotstar.com/in/shows/mr-and-mrs-office/1271718279'}]
+        calls=[]
+        def reply(request,**kwargs):
+            parsed=urlparse(request.full_url);params={key:values[0] for key,values in parse_qs(parsed.query).items()}
+            calls.append((parsed.path,params))
+            if parsed.path.endswith('/changes'):
+                item={'id':'newest','title':'New title','showType':'movie','streamingOptions':{'in':[]}}
+                return Response({'shows':{'newest':item},'changes':[],'hasMore':False})
+            return Response({'invalid':'provider search response'})
+        actual=sync.recheck_reported_titles
+        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',side_effect=reply), \
+             patch.object(sync,'recheck_reported_titles',side_effect=lambda db,client,at:actual(db,client,at,records)):
+            self.assertEqual(sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),NOW,recheck_reports=True),1)
+        self.assertEqual([path for path,_ in calls],['/v4/changes','/v4/shows/search/title'])
+        self.assertEqual(calls[0][1]['change_type'],'new')
+        self.assertEqual(calls[1][1]['show_type'],'series')
+        self.assertIsNotNone(self.db.execute("SELECT id FROM titles WHERE id='motn:newest'").fetchone())
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
+        self.assertEqual(sync.get_meta(self.db,'title_recheck:hotstar:1271718279')['status'],'lookup_failed')
+        self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
+
+    def test_new_feed_uses_run_budget_before_a_reported_lookup_and_blocked_report_does_not_claim_attempt(self):
+        self.prepared_catalogue();self.attempts(NOW-1,369)
+        sync.set_meta(self.db,'watermark:new',NOW-sync.DAY);self.db.commit()
+        records=[{'title':'Fixture','netflixId':'123'}]
+        actual=sync.recheck_reported_titles
+        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',side_effect=self.reply), \
+             patch.object(sync,'recheck_reported_titles',side_effect=lambda db,client,at:actual(db,client,at,records)):
+            with self.assertRaises(sync.BudgetReached):
+                sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key',run_limit=1),NOW,recheck_reports=True)
+        self.assertEqual(len(self.requests),1)
+        self.assertEqual(self.requests[0][1]['change_type'],'new')
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
+        self.assertIsNone(sync.get_meta(self.db,'title_recheck_last_attempt'))
 
     def test_legacy_metadata_repair_cannot_bypass_a_full_run_with_oversized_environment_limit(self):
         metadata_spec = importlib.util.spec_from_file_location('budget_tmdb', Path(__file__).parents[1] / 'scripts/tmdb_enrich.py')
