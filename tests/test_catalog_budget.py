@@ -1,5 +1,7 @@
 """Offline regression cases for continuous collection and reserved backfill quota."""
 import importlib.util
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -76,6 +78,8 @@ class BudgetTests(unittest.TestCase):
         parsed = urlparse(request.full_url)
         params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         self.requests.append((parsed.path, params))
+        if parsed.path.endswith('/countries/in'):
+            return Response({'countryCode':'in', 'services':[{'id':ident, 'name':name} for name,ident in self.mapping.items()]})
         if parsed.path.endswith('/changes'):
             return Response({'shows': {}, 'changes': [], 'hasMore': False})
         if parsed.path.endswith('/shows/search/title'):
@@ -192,16 +196,16 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(sync.get_meta(self.db, 'watermark:updated'), NOW)
         self.assertEqual(sync.get_meta(self.db, 'last_success'), NOW)
 
-    def test_pending_maintenance_resumes_before_a_fresh_new_feed_without_losing_its_cursor(self):
+    def test_new_feed_precedes_pending_maintenance_without_losing_its_cursor(self):
         self.prepared_catalogue()
         sync.set_meta(self.db, 'watermark:new', NOW - 6 * 3600)
         sync.set_meta(self.db, 'change_window_v2:updated', {'from': NOW - 300, 'to': NOW - 100,
             'cursor': 'saved-update-cursor', 'seen': ['saved-update-cursor'], 'pages': 0, 'mapping': self.mapping})
         self.db.commit()
         self.run_sync(extra={'CATALOG_BACKFILL_PAGES': '0'})
-        self.assertEqual([params['change_type'] for path, params in self.requests], ['updated', 'new'])
-        self.assertEqual(self.requests[0][1]['cursor'], 'saved-update-cursor')
-        self.assertEqual(self.requests[0][1]['to'], str(NOW - 100))
+        self.assertEqual([params['change_type'] for path, params in self.requests], ['new', 'updated'])
+        self.assertEqual(self.requests[1][1]['cursor'], 'saved-update-cursor')
+        self.assertEqual(self.requests[1][1]['to'], str(NOW - 100))
         self.assertIsNone(sync.get_meta(self.db, 'change_window_v2:updated'))
         self.assertEqual(sync.get_meta(self.db, 'watermark:updated'), NOW - 100)
 
@@ -222,6 +226,171 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(sync.get_meta(self.db, 'original_backfill_v1:te:movie'), original)
         self.assertEqual(sync.get_meta(self.db, 'original_backfill_next'), 4)
         self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0], 0)
+
+    def pending(self, kind, at=NOW, pages=13):
+        state = {'from':at-2*sync.DAY, 'to':at-100, 'cursor':str(pages),
+                 'seen':[str(pages)], 'pages':pages, 'mapping':dict(self.mapping)}
+        sync.set_meta(self.db, 'change_window_v2:'+kind, state)
+        self.db.commit()
+        return state
+
+    def test_due_new_feed_commits_before_a_more_than_twelve_page_maintenance_backlog(self):
+        self.prepared_catalogue()
+        sync.set_meta(self.db, 'watermark:new', NOW-sync.DAY)
+        pending = self.pending('removed')
+        requests = []
+        def reply(request, **kwargs):
+            params = {key:values[0] for key,values in parse_qs(urlparse(request.full_url).query).items()}
+            requests.append(params)
+            if params['change_type'] == 'new':
+                item = {'id':'fresh', 'title':'Fresh title', 'showType':'movie', 'streamingOptions':{'in':[]}}
+                return Response({'shows':{'fresh':item}, 'changes':[], 'hasMore':False})
+            self.assertEqual(params['change_type'],'removed')
+            return Response({'shows':{},'changes':[], 'hasMore':True,'nextCursor':str(int(params['cursor'])+1)})
+        with patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=reply):
+            client = sync.Client(self.db,'fixture-not-a-key')
+            with self.assertRaises(sync.BudgetReached):
+                sync.sync(self.db,client,NOW)
+        self.db.rollback()
+        self.assertEqual((client.calls,requests[0]['change_type']),(12,'new'))
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
+        self.assertIsNotNone(self.db.execute("SELECT id FROM titles WHERE id='motn:fresh'").fetchone())
+        resumed = sync.get_meta(self.db,'change_window_v2:removed')
+        self.assertEqual(resumed['pages'],pending['pages']+11)
+        self.assertEqual((resumed['from'],resumed['to'],resumed['mapping']),(pending['from'],pending['to'],pending['mapping']))
+
+    def test_conservation_defers_maintenance_and_all_old_imports_without_resetting_state(self):
+        self.prepared_catalogue()
+        self.attempts(NOW-1,369)
+        for kind in ('new','updated','removed'):
+            sync.set_meta(self.db,'watermark:'+kind,NOW-sync.DAY)
+        maintenance = {kind:self.pending(kind) for kind in ('updated','removed')}
+        older = {'cursor':'keep-old','pages':8,'complete':False}
+        sync.set_meta(self.db,'catalog_backfill_v1:netflix:movie',older)
+        sync.set_meta(self.db,'original_backfill_v1:te:movie',older)
+        sync.set_meta(self.db,'coverage',{'mapping':self.mapping,'checkedAt':NOW-2*sync.DAY,'missing':[]})
+        self.db.commit()
+        client,_ = self.run_sync(extra={'ORIGINAL_LANGUAGE_BACKFILL_PAGES':'2'})
+        self.assertEqual(client.calls,1)
+        self.assertEqual([p['change_type'] for _,p in self.requests],['new'])
+        for kind,state in maintenance.items():
+            self.assertEqual(sync.get_meta(self.db,'change_window_v2:'+kind),state)
+        self.assertEqual(sync.get_meta(self.db,'catalog_backfill_v1:netflix:movie'),older)
+        self.assertEqual(sync.get_meta(self.db,'original_backfill_v1:te:movie'),older)
+        self.assertEqual(sync.get_meta(self.db,'last_success'),NOW-sync.DAY)
+        budget = sync.request_budget(self.db,NOW)
+        self.assertEqual((budget['conservationMode'],budget['newFeedDailyLimit'],budget['newFeedRequestsToday']),(True,2,1))
+        self.requests.clear()
+        self.assertEqual(self.run_sync(NOW+6*3600)[0].calls,0,'A complete new feed is checked daily in conservation')
+
+    def test_conservation_counts_real_new_attempts_across_restarts_and_resumes_next_utc_day(self):
+        self.prepared_catalogue()
+        self.attempts(NOW-1,369)
+        sync.set_meta(self.db,'watermark:new',NOW-sync.DAY)
+        self.db.commit()
+        requested = []
+        def reply(request, **kwargs):
+            params = {key:values[0] for key,values in parse_qs(urlparse(request.full_url).query).items()}
+            requested.append(params)
+            page = int(params.get('cursor','0'))+1
+            return Response({'shows':{},'changes':[],'hasMore':page<3,'nextCursor':str(page)})
+        with patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=reply):
+            client=sync.Client(self.db,'fixture-not-a-key')
+            with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
+                sync.sync(self.db,client,NOW)
+        self.db.rollback()
+        state=sync.get_meta(self.db,'change_window_v2:new')
+        self.assertEqual((client.calls,state['pages'],state['cursor']),(2,2,'2'))
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW-sync.DAY)
+        freshness=sync.streaming_freshness(self.db,NOW,True)['new']
+        self.assertEqual(freshness['completedThrough'],sync.stamp(NOW-sync.DAY))
+        self.assertEqual(freshness['pendingWindow']['pages'],2)
+        self.assertFalse(freshness['checkDue'])
+        self.assertTrue(freshness['deferredByConservation'])
+        database=self.db.execute('PRAGMA database_list').fetchone()[2]
+        self.db.close();self.db=sync.open_db(database)
+        self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
+        client,_=self.run_sync(NOW+6*3600)
+        self.assertEqual(client.calls,0,'Manual/scheduled repeat cannot spend another new-page allowance')
+        tomorrow=NOW+sync.DAY
+        with patch.object(sync.time,'time',return_value=tomorrow), patch.object(sync,'urlopen',side_effect=reply):
+            self.assertEqual(sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),tomorrow),0)
+        self.assertEqual(requested[-1]['cursor'],'2')
+        self.assertEqual(int(requested[-1]['to']),state['to'],'A resumed query retains its frozen end')
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
+        self.assertIsNone(sync.get_meta(self.db,'change_window_v2:new'))
+        self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),1)
+        self.assertEqual(sync.request_budget(self.db,tomorrow)['requestsUsed'],372)
+
+    def test_conservation_failed_new_attempts_consume_the_daily_allowance_before_network(self):
+        self.prepared_catalogue()
+        self.attempts(NOW-1,369)
+        class Malformed(Response):
+            def read(self):return b'{'
+        with patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=[URLError('offline'),Malformed(None)]) as network:
+            for _ in range(2):
+                with self.assertRaises(sync.SyncError):
+                    sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+            with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
+                sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+        self.assertEqual(network.call_count,2)
+        self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
+        self.assertEqual(sync.request_budget(self.db,NOW)['requestsUsed'],371)
+
+    def test_conservation_reuses_coverage_for_seven_days_then_refreshes_it_once(self):
+        self.prepared_catalogue()
+        self.attempts(NOW-1,369)
+        sync.set_meta(self.db,'coverage',{'mapping':self.mapping,'checkedAt':NOW-6*sync.DAY,'missing':[]})
+        self.db.commit()
+        self.assertEqual(self.run_sync()[0].calls,0)
+        sync.set_meta(self.db,'coverage',{'mapping':self.mapping,'checkedAt':NOW-7*sync.DAY,'missing':[]})
+        self.db.commit()
+        self.assertEqual(self.run_sync()[0].calls,1)
+        self.assertEqual(self.requests[0][0],'/v4/countries/in')
+        self.assertEqual(sync.get_meta(self.db,'coverage')['checkedAt'],NOW)
+
+    def test_next_month_automatically_resumes_maintenance_with_old_cursors_and_request_history(self):
+        self.prepared_catalogue()
+        november=epoch('2026-11-30T20:00:00+00:00')
+        december=epoch('2026-12-01T01:00:00+00:00')
+        self.attempts(november,380)
+        sync.set_meta(self.db,'coverage',{'mapping':self.mapping,'checkedAt':november,'missing':[]})
+        for kind in ('new','updated','removed'):sync.set_meta(self.db,'watermark:'+kind,november)
+        pending=self.pending('updated',november)
+        sync.set_meta(self.db,'new_feed_attempts_v1',{'utcDay':november//sync.DAY,'attempts':2})
+        self.db.commit()
+        self.assertTrue(sync.request_budget(self.db,november)['conservationMode'])
+        client,_=self.run_sync(december,{'CATALOG_BACKFILL_PAGES':'0'})
+        self.assertFalse(sync.request_budget(self.db,december)['conservationMode'])
+        self.assertEqual([p['change_type'] for _,p in self.requests],['new','updated','removed'])
+        self.assertEqual(self.requests[1][1]['cursor'],pending['cursor'])
+        self.assertEqual(int(self.requests[1][1]['to']),pending['to'])
+        self.assertIsNone(sync.get_meta(self.db,'change_window_v2:updated'))
+        self.assertEqual((client.calls,sync.request_budget(self.db,december)['requestsUsed']),(3,3))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],383,'Monthly accounting never deletes past requests')
+
+    def test_conservation_run_exports_new_freshness_without_claiming_maintenance_is_current(self):
+        self.prepared_catalogue()
+        self.attempts(NOW-1,369)
+        for kind in ('new','updated','removed'):sync.set_meta(self.db,'watermark:'+kind,NOW-sync.DAY)
+        pending=self.pending('removed')
+        self.db.commit()
+        output=Path(self.temp.name)/'catalog.json';report=Path(self.temp.name)/'report.json'
+        args=['catalog_sync.py','--db',str(Path(self.temp.name)/'catalog.sqlite'),'--export',str(output),'--report',str(report),'--allow-cached-on-limit']
+        with patch.object(sys,'argv',args), patch.dict(os.environ,{'STREAMING_API_KEY':'fixture-not-a-key'},clear=True), \
+             patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=self.reply), \
+             patch.object(sync,'recheck_reported_titles') as recheck, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sync.main(),0)
+            recheck.assert_not_called()
+        exported=json.loads(output.read_text());reported=json.loads(report.read_text())
+        self.assertEqual(reported['runs'][-1]['status'],'limited')
+        self.assertIn('Quota conservation',reported['runs'][-1]['message'])
+        self.assertEqual(exported['updatedAt'],sync.stamp(NOW-sync.DAY))
+        self.assertEqual(exported['streamingFreshness']['new']['completedThrough'],sync.stamp(NOW))
+        self.assertTrue(exported['streamingFreshness']['removed']['deferredByConservation'])
+        self.assertEqual(exported['streamingFreshness']['removed']['pendingWindow']['to'],sync.stamp(pending['to']))
+        self.assertEqual(exported['streamingFreshness'],reported['streamingFreshness'])
+        self.assertEqual((reported['newCheckHours'],reported['requestBudget']['newFeedRequestsToday']),(24,1))
 
     def test_generic_import_precedes_optional_original_scans_and_still_obeys_six_page_maximum(self):
         self.prepared_catalogue()
@@ -248,6 +417,7 @@ class BudgetTests(unittest.TestCase):
         self.attempts(NOW - 1, 400 - reserve)
         legacy = {'pages': 57, 'complete': False, 'cursor': 'do-not-reset'}
         sync.set_meta(self.db, 'catalog_backfill_v1:netflix:movie', legacy)
+        sync.set_meta(self.db, 'watermark:new', NOW-sync.DAY)
         self.db.commit()
         later = epoch('2026-11-04T12:40:00+00:00')
         client, _ = self.run_sync(later)

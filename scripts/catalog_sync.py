@@ -28,6 +28,7 @@ MONTHLY_REQUEST_CAP = 400
 RUN_REQUEST_CAP = 12
 MAINTENANCE_REQUESTS_PER_DAY = 8
 BACKFILL_HEADROOM = 20
+CONSERVATION_NEW_PAGES_PER_DAY = 2
 
 class SyncError(Exception):
     pass
@@ -58,6 +59,10 @@ def get_meta(db, key, default=None):
 def set_meta(db, key, value):
     db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(value)))
 
+def new_feed_requests_today(db, now):
+    counted = get_meta(db, 'new_feed_attempts_v1', {})
+    return counted.get('attempts', 0) if counted.get('utcDay') == now // DAY else 0
+
 def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
     """Only bulk-import the allowance above a reserve for the rest of this UTC month."""
     current = datetime.fromtimestamp(now, timezone.utc)
@@ -68,20 +73,43 @@ def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
     remaining = max(0, limit-used)
     days_left = (int(end.timestamp())-now+DAY-1)//DAY
     reserve = days_left*MAINTENANCE_REQUESTS_PER_DAY + BACKFILL_HEADROOM
+    conserving = remaining <= reserve
+    new_attempts = new_feed_requests_today(db, now)
     return {'monthlyLimit': limit, 'requestsUsed': used, 'requestsRemaining': remaining,
             'freshnessReserve': reserve, 'backfillAvailable': max(0, remaining-reserve),
-            'headroom': BACKFILL_HEADROOM, 'maintenanceRequestsPerDay': MAINTENANCE_REQUESTS_PER_DAY}
+            'headroom': BACKFILL_HEADROOM, 'maintenanceRequestsPerDay': MAINTENANCE_REQUESTS_PER_DAY,
+            'conservationMode': conserving, 'newFeedDailyLimit': CONSERVATION_NEW_PAGES_PER_DAY if conserving else None,
+            'newFeedRequestsToday': new_attempts,
+            'newFeedRequestsRemainingToday': max(0, CONSERVATION_NEW_PAGES_PER_DAY-new_attempts) if conserving else None}
 
-def change_feed_due(db, kind, now):
+def change_feed_due(db, kind, now, conservation=False):
+    if conservation and (kind != 'new' or new_feed_requests_today(db, now) >= CONSERVATION_NEW_PAGES_PER_DAY):
+        return False
     # Resume interrupted windows immediately; their saved query may be older than
     # the normal cadence. Daily maintenance preserves quota for older titles.
     if get_meta(db, 'change_window_v2:'+kind):
         return True
     watermark = get_meta(db, 'watermark:'+kind)
-    interval = 6*3600 if kind == 'new' else DAY
+    interval = 6*3600 if kind == 'new' and not conservation else DAY
     # UTC slots tolerate GitHub scheduling jitter without repeating a manual
     # check in the same slot or accidentally waiting twelve hours for new titles.
     return watermark is None or watermark//interval < now//interval
+
+def streaming_freshness(db, now, conservation=False):
+    feeds = {}
+    for kind in ('new', 'updated', 'removed'):
+        watermark = get_meta(db, 'watermark:'+kind)
+        pending = get_meta(db, 'change_window_v2:'+kind)
+        feeds[kind] = {'completedThrough': stamp(watermark) if watermark is not None else None,
+                       'pendingWindow': {'from':stamp(pending['from']), 'to':stamp(pending['to']), 'pages':pending['pages']} if pending else None,
+                       'checkDue': change_feed_due(db, kind, now, conservation),
+                       'deferredByConservation': conservation and (kind != 'new' or new_feed_requests_today(db, now) >= CONSERVATION_NEW_PAGES_PER_DAY)}
+    return feeds
+
+def update_complete_watermark(db):
+    watermarks = [get_meta(db, 'watermark:'+kind) for kind in ('new','updated','removed')]
+    if all(value is not None for value in watermarks):
+        set_meta(db, 'last_success', min(watermarks))
 
 def platform_map(country):
     if country.get('countryCode') != 'in' or not isinstance(country.get('services'), list):
@@ -166,11 +194,17 @@ class Client:
 
     def get(self, endpoint, params=None):
         now = int(time.time())
-        if request_budget(self.db, now, self.monthly_limit)['requestsRemaining'] <= 0 or self.calls >= self.run_limit:
+        budget = request_budget(self.db, now, self.monthly_limit)
+        if budget['requestsRemaining'] <= 0 or self.calls >= self.run_limit:
             raise BudgetReached('Configured request limit reached; resume on a later run or adjust budget')
+        new_page = endpoint == '/changes' and (params or {}).get('change_type') == 'new'
+        if new_page and budget['conservationMode'] and budget['newFeedRequestsRemainingToday'] <= 0:
+            raise BudgetReached('Quota conservation: two new-release pages attempted today; resume next UTC day')
         # Count and commit before sending, including network failures and malformed responses.
         row = self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,0)', (now, endpoint))
         request_id = row.lastrowid
+        if new_page:
+            set_meta(self.db, 'new_feed_attempts_v1', {'utcDay':now//DAY, 'attempts':new_feed_requests_today(self.db, now)+1})
         self.db.commit()
         self.calls += 1
         headers = {'Accept': 'application/json'}
@@ -409,14 +443,18 @@ def sync_change_feed(db, client, mapping, kind, started, now):
                 db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)',
                     (event_id, 'motn:'+str(event['showId']), reverse[service], kind, event['timestamp']))
         set_meta(db, 'watermark:' + kind, state['to'])
+        update_complete_watermark(db)
         set_meta(db, key, None)
         db.execute('DELETE FROM change_pages WHERE kind=?', (kind,))
         db.commit()
         return changed
 
 def sync(db, client, now):
+    def conserving():
+        return request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))['conservationMode']
     coverage = get_meta(db, 'coverage')
-    if not coverage or now - coverage['checkedAt'] >= DAY:
+    coverage_interval = 7*DAY if conserving() else DAY
+    if not coverage or now - coverage['checkedAt'] >= coverage_interval:
         mapping = platform_map(client.get('/countries/in'))
         if not mapping:
             raise SyncError('None of the requested services are supported')
@@ -453,12 +491,14 @@ def sync(db, client, now):
     if not get_meta(db, 'baseline_complete'):
         set_meta(db, 'baseline_complete', now)
         db.commit()
-    changed += backfill_recent(db, client, mapping, now)
+    if not conserving():
+        changed += backfill_recent(db, client, mapping, now)
     # Large change feeds resume from committed pages under the same request caps.
-    change_types = sorted(('new', 'updated', 'removed'),
-                          key=lambda kind: not bool(get_meta(db, 'change_window_v2:'+kind)))
+    # New releases must never wait behind an arbitrarily large maintenance feed.
+    change_types = ['new'] + sorted(('updated', 'removed'),
+                                   key=lambda kind: not bool(get_meta(db, 'change_window_v2:'+kind)))
     for change_type in change_types:
-        if change_feed_due(db, change_type, now):
+        if change_feed_due(db, change_type, now, conserving()):
             changed += sync_change_feed(db, client, mapping, change_type, started, now)
     budget = request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))
     pages = min(budget['backfillAvailable'], max(0, min(6, int(os.environ.get('CATALOG_BACKFILL_PAGES', '6')))))
@@ -469,7 +509,7 @@ def sync(db, client, now):
     original_pages = min(budget['backfillAvailable'], max(0, min(2, int(os.environ.get('ORIGINAL_LANGUAGE_BACKFILL_PAGES', '0')))))
     changed += backfill_original_languages(db, client, mapping, now, max_pages=original_pages)
     # A resumed feed covers its original frozen window, not the resume time.
-    set_meta(db, 'last_success', min(get_meta(db, 'watermark:'+kind, now) for kind in ('new','updated','removed')))
+    update_complete_watermark(db)
     db.commit()
     return changed
 
@@ -499,6 +539,8 @@ def report(db, now):
     return {'generatedAt': stamp(now), 'catalog': catalog, 'titleRechecks':rechecks, 'pilotStartedAt': stamp(begin),
             'pilotEndsAt': None, 'collectorMode': 'continuous', 'scheduleHours': 6, 'maintenanceHours': 24,
             'requestBudget': budget, 'requestsThisMonth': budget['requestsUsed'],
+            'newCheckHours': 24 if budget['conservationMode'] else 6,
+            'streamingFreshness': streaming_freshness(db, now, budget['conservationMode']),
             'requestsDuringPilot': db.execute('SELECT count(*) FROM requests WHERE at>=?', (begin,)).fetchone()[0],
             'supportedPlatforms': list(coverage.get('mapping', {})), 'missingPlatforms': coverage.get('missing', list(PLATFORMS)),
             'lastSuccessfulUpdate': stamp(get_meta(db, 'last_success')) if get_meta(db, 'last_success') else None,
@@ -559,7 +601,10 @@ def export_catalog(db, path, now):
         title['weekly'] = bool(title['weeklyPlatforms'])
         rows.append(title)
     latest_run = db.execute('SELECT status FROM runs ORDER BY id DESC LIMIT 1').fetchone()
+    budget = request_budget(db, now, int(os.environ.get('MONTHLY_REQUEST_LIMIT', str(MONTHLY_REQUEST_CAP))))
     output = {'schemaVersion': 1, 'mode': 'live', 'updatedAt': stamp(get_meta(db, 'last_success')),
+              'requestBudget': budget,
+              'streamingFreshness': streaming_freshness(db, now, budget['conservationMode']),
               'syncStatus': latest_run[0] if latest_run else 'unknown',
               'scope': 'Gradually expanded streaming catalog plus tracked additions; search covers imported titles.',
               'catalogBackfill': catalog_backfill_status(db, get_meta(db, 'coverage', {}).get('mapping', {})),
@@ -659,9 +704,12 @@ def main():
                     int(os.environ.get('MONTHLY_REQUEST_LIMIT', '400')),
                     int(os.environ.get('RUN_REQUEST_LIMIT', '12')))
     try:
-        changed = recheck_reported_titles(db, client, now)
+        changed = 0 if request_budget(db, now, client.monthly_limit)['conservationMode'] else recheck_reported_titles(db, client, now)
         changed += sync(db, client, now)
-        status, message = 'success', 'Catalog check completed'
+        if request_budget(db, now, client.monthly_limit)['conservationMode']:
+            status, message = 'limited', 'Quota conservation: new releases checked daily (two pages per UTC day); maintenance and older imports deferred'
+        else:
+            status, message = 'success', 'Catalog check completed'
     except BudgetReached as error:
         db.rollback()
         status, message, changed = 'limited', str(error), 0
