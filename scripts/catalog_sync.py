@@ -172,7 +172,11 @@ def normalize(show, mapping, now):
 
 def save_show(db, show, mapping, now):
     body = normalize(show, mapping, now)
-    old = db.execute('SELECT body FROM titles WHERE id=?', (body['id'],)).fetchone()
+    old = db.execute('SELECT body,last_checked FROM titles WHERE id=?', (body['id'],)).fetchone()
+    # A resumed feed may contain pages fetched before another feed's snapshot.
+    # Validate them above, but never roll back current title/offer evidence.
+    if old and now < old[1]:
+        return 0
     if old and not body.get('originalLanguage'):
         body['originalLanguage'] = json.loads(old[0]).get('originalLanguage')
     if old:
