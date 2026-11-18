@@ -458,6 +458,90 @@ if __name__ == '__main__':
     unittest.main()
 
 class ReportedTitleTests(unittest.TestCase):
+    def hotstar_case(self):
+        folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
+        db=sync.open_db(Path(folder.name)/'catalog.sqlite');self.addCleanup(db.close)
+        sync.set_meta(db,'coverage',{'mapping':{'Netflix':'netflix','JioHotstar':'hotstar'}});db.commit()
+        row={'title':'Mr & Mrs Office','platform':'JioHotstar','showType':'series','platformTitleId':'1271718279',
+             'sourceURL':'https://www.hotstar.com/in/shows/mr-and-mrs-office/1271718279'}
+        item=show('office',services=('hotstar',));item['title']='Mr & Mrs Office';item['showType']='series'
+        item['streamingOptions']['in'][0]['link']=row['sourceURL']
+        class Lookup:
+            calls=0
+            def __init__(inner,results):inner.results=results
+            def get(inner,endpoint,params):
+                inner.calls+=1;inner.request=(endpoint,params);return inner.results
+        return db,row,item,Lookup
+
+    def test_hotstar_series_requires_exact_identity_and_uses_only_provider_audio_and_dates(self):
+        db,row,item,Lookup=self.hotstar_case()
+        item['streamingOptions']['in'][0]['audios']=[]
+        wrong=show('other-office');wrong['title']='The Office'
+        row['audio']=['Tamil'];row['releaseDate']='invented date ignored'
+        lookup=Lookup([wrong,item])
+        self.assertEqual(sync.recheck_reported_titles(db,lookup,NOW,[row]),1)
+        self.assertEqual(lookup.request[1]['show_type'],'series')
+        self.assertEqual(lookup.request[1]['series_granularity'],'show')
+        self.assertEqual(lookup.request[1]['country'],'in')
+        body=json.loads(db.execute("SELECT body FROM titles WHERE id='motn:office'").fetchone()[0])
+        self.assertEqual((body['type'],body['offers'][0]['audio']),('Series',[]))
+        self.assertEqual(db.execute('SELECT platform,at FROM events').fetchone(),('JioHotstar',NOW-1000))
+        self.assertEqual(sync.recheck_reported_titles(db,lookup,NOW+8*sync.DAY,[row]),0)
+        self.assertEqual(lookup.calls,1,'Resolved exact identities are never looked up again')
+
+    def test_hotstar_wrong_id_type_domain_or_ambiguous_results_never_import_other_office(self):
+        cases=['wrong-id','wrong-type','wrong-domain','http','credentials','wrong-category','ambiguous','malformed','malformed-offer']
+        for case in cases:
+            with self.subTest(case=case):
+                db,row,item,Lookup=self.hotstar_case()
+                offer=item['streamingOptions']['in'][0]
+                if case=='wrong-id':offer['link']=row['sourceURL'].replace('1271718279','1270000000')
+                if case=='wrong-type':item['showType']='movie'
+                if case=='wrong-domain':offer['link']=row['sourceURL'].replace('hotstar.com','hotstar.com.example.test')
+                if case=='http':offer['link']=row['sourceURL'].replace('https:','http:')
+                if case=='credentials':offer['link']=row['sourceURL'].replace('https://','https://user@')
+                if case=='wrong-category':offer['link']=row['sourceURL'].replace('/shows/','/movies/')
+                if case=='malformed-offer':item['streamingOptions']['in']=[None]
+                results=[item]
+                if case=='ambiguous':
+                    duplicate=copy.deepcopy(item);duplicate['id']='duplicate';results.append(duplicate)
+                if case=='malformed':results={'not':'a result list'}
+                self.assertEqual(sync.recheck_reported_titles(db,Lookup(results),NOW,[row]),0)
+                self.assertEqual(db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+                self.assertEqual(db.execute('SELECT count(*) FROM events').fetchone()[0],0)
+                self.assertFalse(sync.get_meta(db,'title_recheck:hotstar:1271718279')['resolved'])
+
+    def test_report_sources_must_match_exact_official_route_and_id_before_any_request(self):
+        for key,value in [('platformTitleId','999'),('sourceURL','https://example.test/in/shows/mr-and-mrs-office/1271718279'),
+                          ('sourceURL','https://www.hotstar.com/in/movies/mr-and-mrs-office/1271718279'),
+                          ('sourceURL',17)]:
+            with self.subTest(key=key,value=value):
+                db,row,item,Lookup=self.hotstar_case();row[key]=value;lookup=Lookup([item])
+                with self.assertRaises(sync.SyncError):sync.recheck_reported_titles(db,lookup,NOW,[row])
+                self.assertEqual(lookup.calls,0)
+
+    def test_reported_weekly_events_use_exact_offer_identity_and_provider_seven_day_bounds(self):
+        for added,expected in [(NOW-7*sync.DAY,1),(NOW,1),(NOW-7*sync.DAY-1,0),(NOW+1,0),(None,0),(True,0)]:
+            with self.subTest(added=added):
+                db,row,item,Lookup=self.hotstar_case()
+                item['streamingOptions']['in'][0]['availableSince']=added
+                wrong=copy.deepcopy(item['streamingOptions']['in'][0]);wrong['availableSince']=NOW
+                wrong['link']=row['sourceURL'].replace('1271718279','1270000000')
+                item['streamingOptions']['in'].append(wrong)
+                self.assertEqual(sync.recheck_reported_titles(db,Lookup([item]),NOW,[row]),1)
+                self.assertEqual(db.execute('SELECT count(*) FROM events').fetchone()[0],expected)
+
+    def test_unresolved_conservation_report_waits_seven_days_without_using_global_daily_slot(self):
+        db,row,item,Lookup=self.hotstar_case()
+        db.executemany('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)',[(NOW-1,'/fixture',200)]*369);db.commit()
+        lookup=Lookup([])
+        sync.recheck_reported_titles(db,lookup,NOW,[row])
+        sync.recheck_reported_titles(db,lookup,NOW+6*sync.DAY,[row])
+        self.assertEqual(lookup.calls,1)
+        self.assertEqual(sync.get_meta(db,'title_recheck_last_attempt'),NOW)
+        sync.recheck_reported_titles(db,lookup,NOW+7*sync.DAY,[row])
+        self.assertEqual(lookup.calls,2)
+
     def test_exact_provider_identity_and_recent_offer(self):
         with tempfile.TemporaryDirectory() as folder:
             db=sync.open_db(Path(folder)/'catalog.sqlite')

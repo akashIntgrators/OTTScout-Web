@@ -46,8 +46,8 @@ def build_summary(report):
                   'Older imports can use only the allowance above the freshness reserve. The reserve already includes headroom; do not subtract it twice. Actual calls, including failures, still share the monthly and per-run caps.']
         if budget.get('conservationMode'):
             lines += ['', '**Quota conservation is active:** prioritize new additions; defer availability maintenance and older imports.',
-                      f"- New-addition page attempts today: {value('newFeedRequestsToday')} / {value('newFeedDailyLimit')}",
-                      f"- New-addition page attempts remaining today: {value('newFeedRequestsRemainingToday')}"]
+                      f"- New-release requests today (feed pages or reported-title lookups): {value('newFeedRequestsToday')} / {value('newFeedDailyLimit')}",
+                      f"- New-release requests remaining today: {value('newFeedRequestsRemainingToday')}"]
     else:
         lines += ['', 'This report predates the adaptive budget fields; no freshness reserve or backfill allowance is inferred.']
 
