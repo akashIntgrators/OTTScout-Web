@@ -48,6 +48,9 @@ class BudgetTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.db = sync.open_db(Path(self.temp.name) / 'catalog.sqlite')
         self.addCleanup(self.db.close)
+        registry = patch.object(sync, 'OFFICIAL_LISTINGS_PATH', Path(self.temp.name) / 'official-listings.json')
+        registry.start()
+        self.addCleanup(registry.stop)
         # An unplanned provider access fails the test instead of reaching a network.
         blocker = patch.object(sync, 'urlopen', side_effect=AssertionError('Unmocked provider access'))
         blocker.start()

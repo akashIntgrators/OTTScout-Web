@@ -130,3 +130,17 @@ if(suggestTitles('cafe',[{id:'e',title:'Café Society',year:2016}]).length!==1)t
 if(suggestTitles('  drive  ',prompts).length!==4)throw Error('Whitespace prevents suggestions');
 `,context);
 console.log('Autocomplete ranking, limits, duplicate titles and accent matching passed.');
+vm.runInContext(`
+view='discover';liveCatalog={};subscriptionOnly=false;originalOnly=false;audioDescriptionOnly=false;selectedOriginals=null;
+selectedPlatforms.clear();selectedPlatforms.add('JioHotstar');selectedLanguages.clear();selectedLanguages.add('Tamil');
+const officialNow=Date.now()/1000;
+const officialOffer={platform:'JioHotstar',type:'subscription',audio:['Tamil'],availabilitySourceType:'official-listing',evidenceExpiresAt:officialNow+3600,availableSince:null};
+const officialTitle={offers:[officialOffer],weeklyEvents:[{platform:'JioHotstar',addedAt:officialNow-60}]};
+if(matchingOffers(officialTitle).length!==1)throw Error('Current official listing excluded');
+if(matchingOffers({...officialTitle,offers:[{...officialOffer,evidenceExpiresAt:officialNow-1}]}).length)throw Error('Expired official listing remained visible');
+if(matchingOffers({...officialTitle,offers:[{...officialOffer,evidenceExpiresAt:null}]}).length)throw Error('Undated official evidence remained visible');
+if(expiringOffers(officialTitle).length)throw Error('Evidence expiry mislabelled as a streaming departure');
+if(matchingOffers({...officialTitle,offers:[{...officialOffer,audio:['Hindi']}]}).length)throw Error('Official Hindi audio passed Tamil filter');
+view='weekly';if(matchingOffers(officialTitle).length!==1)throw Error('Official release event excluded');
+`,context);
+console.log('Dated official listing eligibility, language filtering and departure isolation passed.');

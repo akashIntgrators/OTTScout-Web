@@ -56,23 +56,37 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Build website with the published snapshot
         run: python scripts/build_site.py
-      - name: Preserve the exact published catalogue bytes
+      - name: Preserve provider data and apply only verified official listings
         shell: bash
         run: |
           python - <<'PYCODE'
-          import hashlib, os, shutil
+          import hashlib, json, os, shutil, time
           from pathlib import Path
+          from scripts.official_listings import apply_official_listings
           source = Path('data/catalog.json')
           target = Path('.site/data/catalog.json')
           expected = Path(os.environ['RUNNER_TEMP'], 'ottscout-published-catalogue.sha256').read_text()
           if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
               raise SystemExit('Source catalogue changed during website checks')
-          # The normal builder reapplies description reports to its staged copy.
-          # A website-only publication must retain the already published data.
-          shutil.copyfile(source, target)
-          if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
-              raise SystemExit('Staged catalogue differs from the published snapshot')
-          print('Published catalogue preserved byte-for-byte; no provider or TMDB imports ran.')
+          catalog = json.loads(source.read_text())
+          registry = Path('data/official-listings.json')
+          if registry.exists() or catalog.get('officialListingOverlay') or catalog.get('officialListingAliases'):
+              staged = json.loads(target.read_text())
+              evaluated = staged.get('officialListingOverlay', {}).get('evaluatedAt')
+              if type(evaluated) is not int or abs(time.time() - evaluated) > 600:
+                  raise SystemExit('Missing or stale official-listing build evaluation')
+              records = json.loads(registry.read_text()) if registry.exists() else []
+              result, summary = apply_official_listings(catalog, records, evaluated)
+              # Recompute the one allowed transformation from the unchanged
+              # downloaded snapshot. Neither API imports nor unrelated edits
+              # from the general builder can enter the public catalogue here.
+              target.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
+              print(f'Provider snapshot retained; {summary["fallback"]} official fallbacks applied. No provider or TMDB imports ran.')
+          else:
+              shutil.copyfile(source, target)
+              if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+                  raise SystemExit('Staged catalogue differs from the published snapshot')
+              print('Published catalogue preserved byte-for-byte; no provider or TMDB imports ran.')
           PYCODE
       - name: Configure Pages
         uses: actions/configure-pages@v5

@@ -2,6 +2,8 @@
 
 No new provider subscription or availability API is introduced. Existing Streaming Availability request limits and the scheduled cadence remain unchanged. TMDB watch-provider fallback is deferred pending commercial licensing; TMDB metadata enrichment remains as previously configured.
 
+Reported gaps can also be filled from the reviewed [official-listing registry](official-listings.md). This local overlay requires exact platform identities and dated first-party evidence, expires stale entries, preserves watchlist aliases, and uses no API requests. Official release dates and audio evidence remain distinct from provider detection and metadata.
+
 ## Incomplete metadata
 
 A valid India offer can be published with an empty audio list. The app displays “Audio languages unverified” under All languages. A specific language, original-audio or description-track filter requires explicit matching evidence. Known non-target-only languages and titles with no current offers remain excluded. Static weekly pages include unknown-audio offers; static language pages do not treat them as language matches.

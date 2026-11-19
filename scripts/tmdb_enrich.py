@@ -148,14 +148,20 @@ def enrich(catalog, db, client, now, priority_ids=()):
     for title in titles:
         # Enrichment may run twice on the same in-memory snapshot. Never relabel
         # an old TMDB value as provider data or retain a match for a changed ID.
-        provider_original = title.get('providerOriginalLanguage',
+        provider_original = title.get('providerOriginalLanguage') or (
             title.get('originalLanguage') if title.get('originalLanguageSource') != 'TMDB' else None)
+        provider_original_source = title.get('providerOriginalLanguageSource')
+        if not provider_original_source and title.get('originalLanguageSource') != 'TMDB':
+            provider_original_source = title.get('originalLanguageSource')
+        if provider_original and not provider_original_source:
+            provider_original_source = 'Streaming Availability API'
         title['providerOriginalLanguage'] = provider_original
+        title['providerOriginalLanguageSource'] = provider_original_source if provider_original else None
         title['originalLanguage'] = provider_original
         title.pop('tmdb', None)
         row = cached.get(title['id'])
         title['tmdbMatchStatus'] = 'unmatched' if row and row[0] == identity(title) and not row[2] else 'pending'
-        title['originalLanguageSource'] = 'Streaming Availability API' if title.get('originalLanguage') else None
+        title['originalLanguageSource'] = provider_original_source if title.get('originalLanguage') else None
         if row and row[0] == identity(title) and row[2]:
             metadata = json.loads(row[2])
             title['tmdbMatchStatus'] = 'matched'

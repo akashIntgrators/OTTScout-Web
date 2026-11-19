@@ -228,7 +228,9 @@ function matchesViewingAudio(offer,title) {
 function matchingOffers(title, weeklyOnly = view === 'weekly') {
   const offers = title.offers || [{platform:title.platform, audio:title.audio, subtitles:[], type:'sample'}];
   const priority = {subscription:0, free:1, addon:2, rent:3, buy:4, sample:5};
-  return offers.filter(offer => matchingOriginal(title) && selectedPlatforms.has(offer.platform)
+  return offers.filter(offer => (offer.availabilitySourceType !== 'official-listing'
+      || (Number.isFinite(offer.evidenceExpiresAt) && offer.evidenceExpiresAt > Date.now()/1000))
+    && matchingOriginal(title) && selectedPlatforms.has(offer.platform)
     && (!subscriptionOnly || (offer.type==='subscription' && !offer.addon))
     && matchesViewingAudio(offer,title)
     && (!weeklyOnly || !liveCatalog || weeklyOfferDate(title, offer) !== null))
@@ -263,11 +265,13 @@ function primaryPlatform(offer,titleLabel) {
 }
 function primaryOfferLabel(offer) {
   if(offer.addon)return 'Add-on · '+offer.addon;
-  return offerNames[offer.type]||'Offer unverified';
+  const label=offerNames[offer.type]||'Offer unverified';
+  return offer.availabilitySourceType==='official-listing' ? label+' · Official listing' : label;
 }
 function offerBody(offer, includeSubtitles = true, titleLabel='') {
   const node = element('div', undefined, 'offer');
-  node.append(providerLink(offer,titleLabel), element('div', `${offerNames[offer.type] || 'Offer unverified'}${offer.addon ? ' · ' + offer.addon : ''}`, 'offer-type'));
+  const label=`${offerNames[offer.type] || 'Offer unverified'}${offer.addon ? ' · ' + offer.addon : ''}${offer.availabilitySourceType==='official-listing' ? ' · Official listing' : ''}`;
+  node.append(providerLink(offer,titleLabel), element('div', label, 'offer-type'));
   const audio = element('div', undefined, 'audio');
   audio.append(element('span','Audio: '), document.createTextNode(formatLanguages(offer.audio)));
   node.append(audio);

@@ -1,0 +1,30 @@
+# Official OTT listing fallback
+
+`data/official-listings.json` is a small, reviewed registry for gaps in the streaming API. The overlay reads local JSON only. It introduces no paid API, subscription, scraper, automatic social-post ingestion or extra streaming request. Website-only publication applies it to the existing snapshot without calling the streaming provider or TMDB. Normal scheduled collection retains its existing request limits.
+
+## Evidence and publication
+
+Each entry identifies an exact India title page and platform ID, content type, dated release evidence, a post-release review time, and an expiry no more than 30 days after review. Access type requires evidence; audio and original language require separate explicit evidence. A Tamil promo alone does not establish every playable audio track. Unknown fields stay empty. A future announcement cannot turn into a current offer without a review on or after its release date.
+
+The first entry is **Mr & Mrs Office**, JioHotstar ID **1271718279**. Its official title link is paired with Vi Movies & TV's first-party distribution listing for that exact ID and India region. Vi reports 18 November 2026 and Tamil, Hindi, Telugu, Kannada and Malayalam. Subscription inclusion is supported by JioStar's official all-content plan document. This does not claim that every episode requires payment, that every plan/device works, or that OTTScout tested playback. Original language, subtitles and artwork are not inferred from those fields. Placeholder cast/season metadata in a source must not be copied.
+
+To add or reverify an entry:
+
+1. Confirm the exact official title ID and India URL, rather than matching only a name.
+2. Review current first-party release, access and language evidence. Official authorized-distributor listings are acceptable when they identify the same platform title ID and region.
+3. Update the registry's dated facts and evidence URLs; set `verifiedAt` to the actual review time and `expiresAt` no more than 30 days later. Never extend evidence merely because a generic page returns HTTP 200.
+4. Run the offline tests and publish through the website workflow. No provider key or API lookup is required for that publication.
+
+Invalid or conflicting records fail closed. Expired or unconfirmed records add no availability offer. Expiry is enforced on every catalogue export and website build, including rebuilding a previously published snapshot. The web dashboard also hides expired official offers. Existing offline phone/TV/widget caches need to refresh to receive removals; evidence expiry is deliberately not exported as a streaming departure (`expiresOn`).
+
+A newer explicit show/platform removal recorded by the provider suppresses older official evidence until it is reviewed again. A missing API offer alone is not treated as a removal: that distinction is what lets the fallback fill genuine coverage gaps.
+
+## Identity and source integrity
+
+Use an existing catalogue ID when the title already has one. For a genuinely missing title, use the explicit internal form `motn:official-hotstar-<ID>` or `motn:official-netflix-<ID>`. The `motn:` prefix is a legacy client format; the `official-` marker identifies an OTTScout-curated record and is not a fabricated upstream provider ID.
+
+Exact platform IDs deduplicate later API records. Learned provider-ID aliases persist in the private SQLite metadata and public snapshot independently of evidence expiry or registry removal. This keeps saved titles stable without rewriting provider-owned database rows. Provider availability takes priority when the exact offer is present. Other platforms and their dates stay separate. Curated identity edits invalidate stale metadata matches; unchanged entries retain independent TMDB enrichment.
+
+Official offers carry their real source URL, review/expiry times, reported-audio evidence and day-precision release date. They do not advance the provider's complete-update watermark or invent a provider detection timestamp. The legacy weekly event uses the release day's IST date with explicit official-source metadata. The compact widget feed retains its existing schema. Poster images are omitted unless a separately supported source is available.
+
+The website labels official offers and links the underlying evidence on title pages. Catalogue-level credits distinguish provider data, official listings and TMDB metadata. No live advertising settings are changed by this fallback.

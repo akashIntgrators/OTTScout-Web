@@ -45,6 +45,9 @@ class CatalogTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.db = sync.open_db(self.root / 'state.sqlite')
+        registry = patch.object(sync, 'OFFICIAL_LISTINGS_PATH', self.root / 'official-listings.json')
+        registry.start()
+        self.addCleanup(registry.stop)
     def tearDown(self):
         self.db.close()
         self.temp.cleanup()
@@ -594,7 +597,9 @@ class ReliabilityTests(unittest.TestCase):
             no_offer=show('removed');no_offer['streamingOptions']['in']=[]
             sync.save_show(db,no_offer,{'Netflix':'netflix'},NOW)
             sync.set_meta(db,'last_success',NOW);db.commit()
-            output=Path(folder)/'catalog.json';sync.export_catalog(db,output,NOW+8*sync.DAY)
+            output=Path(folder)/'catalog.json'
+            with patch.object(sync,'OFFICIAL_LISTINGS_PATH',Path(folder)/'official-listings.json'):
+                sync.export_catalog(db,output,NOW+8*sync.DAY)
             titles=json.loads(output.read_text())['titles']
             self.assertEqual([t['id'] for t in titles],['motn:unknown'])
             offer=titles[0]['offers'][0]
