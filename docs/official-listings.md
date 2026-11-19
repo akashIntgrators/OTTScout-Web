@@ -8,6 +8,8 @@ Each entry identifies an exact India title page and platform ID, content type, d
 
 The first entry is **Mr & Mrs Office**, JioHotstar ID **1271718279**. Its official title link is paired with Vi Movies & TV's first-party distribution listing for that exact ID and India region. Vi reports 18 November 2026 and Tamil, Hindi, Telugu, Kannada and Malayalam. Subscription inclusion is supported by JioStar's official all-content plan document. This does not claim that every episode requires payment, that every plan/device works, or that OTTScout tested playback. Original language, subtitles and artwork are not inferred from those fields. Placeholder cast/season metadata in a source must not be copied.
 
+The registry also covers **Guarding Stars** (Netflix **81749470**, 18 November), **The Altruists** (Netflix **81681910**, 19 November), and **Lo Chudail Chali Sasural** (SonyLIV **1790007924**, 18 November). All dates are in 2026. Netflix's dated Tudum articles establish release dates; its exact India title pages report English as original audio, plus English, Hindi, Tamil and Telugu tracks. SonyLIV's exact show page reports Hindi, while its dated official trailer establishes the release date. SonyLIV's India subscription FAQ includes Sony SET and SAB shows in its plans; this supports subscription inclusion without claiming every episode requires payment. The Sony original language stays unverified because a Hindi audio track alone does not establish it. Public listings do not constitute an authenticated India playback test.
+
 To add or reverify an entry:
 
 1. Confirm the exact official title ID and India URL, rather than matching only a name.
@@ -21,7 +23,7 @@ A newer explicit show/platform removal recorded by the provider suppresses older
 
 ## Identity and source integrity
 
-Use an existing catalogue ID when the title already has one. For a genuinely missing title, use the explicit internal form `motn:official-hotstar-<ID>` or `motn:official-netflix-<ID>`. The `motn:` prefix is a legacy client format; the `official-` marker identifies an OTTScout-curated record and is not a fabricated upstream provider ID.
+Use an existing catalogue ID when the title already has one. For a genuinely missing title, use the explicit internal form `motn:official-hotstar-<ID>`, `motn:official-netflix-<ID>` or `motn:official-sonyliv-<ID>`. The `motn:` prefix is a legacy client format; the `official-` marker identifies an OTTScout-curated record and is not a fabricated upstream provider ID.
 
 Exact platform IDs deduplicate later API records. Learned provider-ID aliases persist in the private SQLite metadata and public snapshot independently of evidence expiry or registry removal. This keeps saved titles stable without rewriting provider-owned database rows. Provider availability takes priority when the exact offer is present. Other platforms and their dates stay separate. Curated identity edits invalidate stale metadata matches; unchanged entries retain independent TMDB enrichment.
 

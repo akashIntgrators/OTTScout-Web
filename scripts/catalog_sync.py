@@ -12,9 +12,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 try:
-    from scripts.official_listings import apply_official_listings
+    from scripts.official_listings import SERVICES as OFFICIAL_SERVICES, apply_official_listings
 except ModuleNotFoundError:
-    from official_listings import apply_official_listings
+    from official_listings import SERVICES as OFFICIAL_SERVICES, apply_official_listings
 
 PLATFORMS = {
     'Netflix': ['netflix'], 'Prime Video': ['prime'], 'Sun NXT': ['sunnxt', 'sun nxt'],
@@ -646,8 +646,9 @@ def export_catalog(db, path, now):
                    and isinstance(r.get('id'), str) and isinstance(r.get('platform'), str)} if isinstance(records, list) else set()
         if isinstance(official_aliases, dict):
             for key, ident in official_aliases.items():
-                if key.startswith('hotstar:'): targets.add((ident, 'JioHotstar'))
-                elif key.startswith('netflix:'): targets.add((ident, 'Netflix'))
+                for platform, service in OFFICIAL_SERVICES.items():
+                    if key.startswith(service + ':'):
+                        targets.add((ident, platform))
         removals = {}
         for ident, platform, removed in db.execute("SELECT title_id,platform,MAX(at) FROM events WHERE kind='removed' AND at<=? GROUP BY title_id,platform", (now,)):
             canonical = official_aliases.get(ident, ident) if isinstance(official_aliases, dict) else ident

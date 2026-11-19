@@ -35,6 +35,16 @@ def provider_title():
             'weeklyEvents':[{'platform':'JioHotstar','addedAt':NOW-2*official.DAY},{'platform':'Netflix','addedAt':NOW-3*official.DAY}]}
 
 
+def sony_record():
+    row=record();url='https://www.sonyliv.com/shows/lo-chudail-chali-sasural-1790007924'
+    row.update({'id':'motn:official-sonyliv-1790007924','platform':'SonyLIV','platformTitleId':'1790007924',
+                'title':'Lo Chudail Chali Sasural','type':'Series','year':2026,'sourceURL':url,'releaseDate':'2026-11-18',
+                'releaseEvidenceURL':'https://www.sonyliv.com/trailer/lo-chudail-chali-sasural-trailer-6-1090551128?watch=true',
+                'access':{'type':'subscription','evidenceURL':'https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html'},
+                'audio':['Hindi'],'audioEvidenceURL':url})
+    return row
+
+
 class OfficialListingTests(unittest.TestCase):
     def test_unknown_audio_original_artwork_and_provider_freshness_are_not_invented(self):
         source=catalog();original=copy.deepcopy(source);row=record()
@@ -304,3 +314,81 @@ class OfficialListingTests(unittest.TestCase):
             broken=copy.deepcopy(source);broken['officialListingRemovals'][0]['removedAt']=invalid
             with self.subTest(removedAt=invalid),self.assertRaises(official.OfficialListingError):
                 official.apply_official_listings(broken,[row],NOW)
+
+    def test_sonyliv_series_exact_identity_provider_dedupe_aliases_and_expiry(self):
+        row=sony_record();first,summary=official.apply_official_listings(catalog(),[row],NOW)
+        self.assertEqual((first['titles'][0]['id'],first['titles'][0]['offers'][0]['audio']),(row['id'],['Hindi']))
+        self.assertEqual(first['officialListingAliases']['sonyliv:1790007924'],row['id'])
+        self.assertEqual(summary['fallback'],1)
+        incoming={'id':'motn:991','title':row['title'],'type':'Series','year':2026,'lastCheckedAt':NOW,
+                  'offers':[{'platform':'SonyLIV','type':'subscription','audio':['Hindi'],'link':row['sourceURL']}],
+                  'weeklyEvents':[{'platform':'SonyLIV','addedAt':NOW-100}]}
+        first['titles'].append(incoming)
+        matched,summary=official.apply_official_listings(first,[row],NOW)
+        self.assertEqual((len(matched['titles']),summary['providerMatched'],summary['fallback']),(1,1,0))
+        self.assertEqual(matched['titles'][0]['offers'],incoming['offers'])
+        self.assertEqual(matched['officialListingAliases']['motn:991'],row['id'])
+        fresh=catalog([incoming]);fresh['officialListingAliases']=matched['officialListingAliases']
+        expired,_=official.apply_official_listings(fresh,[row],row['expiresAt'])
+        self.assertEqual(expired['titles'][0]['id'],row['id'])
+        self.assertEqual(expired['titles'][0]['offers'],incoming['offers'])
+        no_registry,_=official.apply_official_listings(fresh,[],NOW)
+        self.assertEqual(no_registry['titles'][0]['id'],row['id'])
+        fallback_only,_=official.apply_official_listings(catalog(),[row],NOW)
+        self.assertEqual(official.apply_official_listings(fallback_only,[row],row['expiresAt'])[0]['titles'],[])
+
+    def test_sonyliv_release_episode_must_belong_to_same_show_and_access_is_exact_india_faq(self):
+        row=sony_record()
+        episode=row['sourceURL']+'/the-bride-s-secret-1090554840?watch=true'
+        row['releaseEvidenceURL']=episode;row['audioEvidenceURL']=episode
+        self.assertEqual(official.apply_official_listings(catalog(),[row],NOW)[1]['fallback'],1)
+        cases=[('type','Movie'),('sourceURL',row['sourceURL'].replace('1790007924','1790007999')),
+               ('sourceURL',row['sourceURL'].replace('www.sonyliv.com','www.sonyliv.com.example.test')),
+               ('releaseEvidenceURL',episode.replace('1790007924','1790007999')),
+               ('releaseEvidenceURL','https://www.sonyliv.com/trailer/a-different-show-trailer-6-1090551128'),
+               ('releaseEvidenceURL',sony_record()['releaseEvidenceURL'].replace('watch=true','watch=false')),
+               ('releaseEvidenceURL',sony_record()['releaseEvidenceURL']+'&redirect=other')]
+        for key,value in cases:
+            broken=copy.deepcopy(row);broken[key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(official.OfficialListingError):
+                official.apply_official_listings(catalog(),[broken],NOW)
+        for value in [row['sourceURL'],'https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html?other=1',
+                      'https://origin-staticv2.sonyliv.com.example.test/UI_icons/india_faqs.html']:
+            broken=copy.deepcopy(row);broken['access']['evidenceURL']=value
+            with self.assertRaises(official.OfficialListingError):official.apply_official_listings(catalog(),[broken],NOW)
+        other=copy.deepcopy(row);other['access']['type']='free'
+        with self.assertRaises(official.OfficialListingError):official.apply_official_listings(catalog(),[other],NOW)
+
+    def test_sonyliv_wrong_provider_show_id_is_not_merged_into_curated_identity(self):
+        row=sony_record()
+        unrelated={'id':'motn:992','title':row['title'],'type':'Series','lastCheckedAt':NOW,
+                   'offers':[{'platform':'SonyLIV','type':'subscription','audio':['Hindi'],
+                              'link':row['sourceURL'].replace('1790007924','1790007999')}],'weeklyEvents':[]}
+        output,summary=official.apply_official_listings(catalog([unrelated]),[row],NOW)
+        self.assertEqual(len(output['titles']),2)
+        self.assertEqual(output['titles'][0]['id'],'motn:992')
+        self.assertEqual((summary['fallback'],summary['providerMatched']),(1,0))
+
+    def test_netflix_newsroom_release_evidence_is_strict_first_party_and_not_audio_access_or_other_platform(self):
+        row=record();url='https://www.netflix.com/in/title/83064751'
+        row.update({'id':'motn:official-netflix-83064751','platform':'Netflix','platformTitleId':'83064751','type':'Movie',
+                    'sourceURL':url,'access':{'type':'subscription','evidenceURL':url}})
+        for evidence in ['https://www.netflix.com/tudum/articles/guarding-stars-release-date',
+                         'https://about.netflix.com/en/news/the-altruists-premieres-november-19']:
+            row['releaseEvidenceURL']=evidence
+            self.assertEqual(official.apply_official_listings(catalog(),[row],NOW)[1]['fallback'],1)
+            cross=sony_record();cross['releaseEvidenceURL']=evidence
+            with self.assertRaises(official.OfficialListingError):official.apply_official_listings(catalog(),[cross],NOW)
+            cross=record();cross['releaseEvidenceURL']=evidence
+            with self.assertRaises(official.OfficialListingError):official.apply_official_listings(catalog(),[cross],NOW)
+            for field in ('audio','access'):
+                broken=copy.deepcopy(row)
+                if field=='audio':broken.update({'audio':['Hindi'],'audioEvidenceURL':evidence})
+                else:broken['access']['evidenceURL']=evidence
+                with self.assertRaises(official.OfficialListingError):official.apply_official_listings(catalog(),[broken],NOW)
+        for evidence in ['http://www.netflix.com/tudum/articles/title','https://www.netflix.com.example.test/tudum/articles/title',
+                         'https://www.netflix.com/tudum/title','https://about.netflix.com/fr/news/title',
+                         'https://www.netflix.com/tudum/articles/title?redirect=other','https://user@about.netflix.com/en/news/title']:
+            broken=copy.deepcopy(row);broken['releaseEvidenceURL']=evidence
+            with self.subTest(evidence=evidence),self.assertRaises(official.OfficialListingError):
+                official.apply_official_listings(catalog(),[broken],NOW)

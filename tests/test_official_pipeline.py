@@ -36,6 +36,49 @@ def show(services=('hotstar',)):
 
 
 class OfficialPipelineTests(unittest.TestCase):
+    def test_sony_alias_and_removal_survive_a_withdrawn_registry_without_network(self):
+        ident = 'motn:official-sonyliv-1790007924'
+        url = 'https://www.sonyliv.com/shows/lo-chudail-chali-sasural-1790007924'
+        row = {**record(), 'id': ident, 'platform': 'SonyLIV', 'platformTitleId': '1790007924',
+               'title': 'Lo Chudail Chali Sasural', 'sourceURL': url,
+               'releaseEvidenceURL': 'https://www.sonyliv.com/trailer/lo-chudail-chali-sasural-trailer-6-1090551128?watch=true',
+               'audio': ['Hindi'], 'audioEvidenceURL': url,
+               'access': {'type': 'subscription', 'evidenceURL': 'https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html'}}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); registry = root / 'official.json'; registry.write_text(json.dumps([row]))
+            db = catalog_sync.open_db(root / 'catalog.sqlite'); self.addCleanup(db.close)
+            mapping = {'SonyLIV': 'sonyliv', 'Netflix': 'netflix'}
+            catalog_sync.set_meta(db, 'last_success', NOW - 86400)
+            catalog_sync.set_meta(db, 'coverage', {'mapping': mapping})
+            show_value = show(('sonyliv', 'netflix'))
+            show_value['title'] = row['title']
+            show_value['streamingOptions']['in'][0]['link'] = url
+            catalog_sync.save_show(db, show_value, mapping, NOW); db.commit()
+            output = root / 'catalog.json'
+            with patch.object(catalog_sync, 'OFFICIAL_LISTINGS_PATH', registry), \
+                    patch.object(catalog_sync, 'urlopen', side_effect=AssertionError('Unexpected provider request')):
+                catalog_sync.export_catalog(db, output, NOW)
+                first = json.loads(output.read_text())
+                self.assertEqual(first['titles'][0]['id'], ident)
+                self.assertEqual(first['titles'][0]['officialListing']['status'], 'provider-matched')
+                self.assertEqual(catalog_sync.get_meta(db, 'official_listing_aliases_v1')['motn:777'], ident)
+                # Remove the curated row, then retain an explicit Sony removal
+                # in the public snapshot for website-only publication too.
+                registry.unlink()
+                show_value['streamingOptions']['in'] = show_value['streamingOptions']['in'][1:]
+                catalog_sync.save_show(db, show_value, mapping, NOW + 1)
+                db.execute('INSERT INTO events VALUES (?,?,?,?,?)', ('sony-removed', 'motn:777', 'SonyLIV', 'removed', NOW + 1)); db.commit()
+                catalog_sync.export_catalog(db, output, NOW + 1)
+                withdrawn = json.loads(output.read_text())
+                self.assertEqual(withdrawn['officialListingRemovals'], [{'id': ident, 'platform': 'SonyLIV', 'removedAt': NOW + 1}])
+                self.assertEqual(withdrawn['titles'][0]['id'], ident)
+                self.assertEqual([o['platform'] for o in withdrawn['titles'][0]['offers']], ['Netflix'])
+                self.assertEqual(db.execute('SELECT count(*) FROM requests').fetchone()[0], 0)
+                # Republishing the older record must respect that newer removal.
+                restored, _ = apply_official_listings(withdrawn, [row], NOW + 2)
+                self.assertEqual([o['platform'] for o in restored['titles'][0]['offers']], ['Netflix'])
+                self.assertEqual(restored['titles'][0]['officialListing']['inactiveReason'], 'newer-provider-removal')
+
     def test_cached_export_uses_no_requests_and_keeps_alias_after_registry_removal(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); registry = root / 'official.json'; registry.write_text(json.dumps([record()]))
@@ -93,7 +136,7 @@ class OfficialPipelineTests(unittest.TestCase):
             title_html = (site / 'titles/official-hotstar-1271718279/index.html').read_text()
             self.assertIn('Official listing', title_html)
             self.assertIn('2026-11-18 (day precision)', title_html)
-            self.assertIn('Reported audio languages: official distributor listing', title_html)
+            self.assertIn('Reported audio languages: official listing', title_html)
             # Tamper with a general-builder row: the publisher must restore the
             # immutable downloaded provider data and retain only the overlay.
             staged = site / 'data/catalog.json'; value = json.loads(staged.read_text())
