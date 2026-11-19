@@ -16,6 +16,18 @@ class Fake:
         if isinstance(result,Exception):raise result
         return copy.deepcopy(result)
 class MetadataTests(unittest.TestCase):
+    def test_official_original_language_keeps_its_source_across_repeated_enrichment(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db=tmdb.open_cache(Path(folder)/'cache.sqlite')
+            source='https://www.hotstar.com/in/shows/a-title/123'
+            title={**TITLE,'tmdbId':77,'originalLanguage':'Tamil','originalLanguageSource':source,'providerOriginalLanguage':None}
+            catalog={'titles':[title]}
+            tmdb.enrich(catalog,db,Fake({'/movie/77':{**DETAILS,'original_language':None}}),1000)
+            tmdb.enrich(catalog,db,None,1001)
+            self.assertEqual(title['originalLanguage'],'Tamil')
+            self.assertEqual(title['originalLanguageSource'],source)
+            self.assertEqual(title['providerOriginalLanguageSource'],source)
+            db.close()
     def test_external_id_type_and_original_audio_separation(self):
         title={**TITLE,'tmdbId':'movie/77'}
         client=Fake({'/movie/77':DETAILS})

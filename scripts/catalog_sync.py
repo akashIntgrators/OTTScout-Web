@@ -11,6 +11,10 @@ from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+try:
+    from scripts.official_listings import apply_official_listings
+except ModuleNotFoundError:
+    from official_listings import apply_official_listings
 
 PLATFORMS = {
     'Netflix': ['netflix'], 'Prime Video': ['prime'], 'Sun NXT': ['sunnxt', 'sun nxt'],
@@ -29,6 +33,7 @@ RUN_REQUEST_CAP = 12
 MAINTENANCE_REQUESTS_PER_DAY = 8
 BACKFILL_HEADROOM = 20
 CONSERVATION_NEW_REQUESTS_PER_DAY = 2
+OFFICIAL_LISTINGS_PATH = Path(__file__).resolve().parents[1] / 'data/official-listings.json'
 
 class SyncError(Exception):
     pass
@@ -631,6 +636,28 @@ def export_catalog(db, path, now):
               'recentHistoryComplete': bool(get_meta(db, 'recent_backfill_v1', {}).get('complete')),
               'source': {'name': 'Streaming Availability API by Movie of the Night', 'url': 'https://www.movieofthenight.com/about/api'},
               'titles': rows}
+    official_aliases = get_meta(db, 'official_listing_aliases_v1', {})
+    if OFFICIAL_LISTINGS_PATH.exists() or official_aliases:
+        # Identity bindings survive evidence expiry and temporary disappearance
+        # of a provider offer, without rewriting provider-owned title rows.
+        output['officialListingAliases'] = official_aliases
+        records = json.loads(OFFICIAL_LISTINGS_PATH.read_text()) if OFFICIAL_LISTINGS_PATH.exists() else []
+        targets = {(r.get('id'), r.get('platform')) for r in records if isinstance(r, dict)
+                   and isinstance(r.get('id'), str) and isinstance(r.get('platform'), str)} if isinstance(records, list) else set()
+        if isinstance(official_aliases, dict):
+            for key, ident in official_aliases.items():
+                if key.startswith('hotstar:'): targets.add((ident, 'JioHotstar'))
+                elif key.startswith('netflix:'): targets.add((ident, 'Netflix'))
+        removals = {}
+        for ident, platform, removed in db.execute("SELECT title_id,platform,MAX(at) FROM events WHERE kind='removed' AND at<=? GROUP BY title_id,platform", (now,)):
+            canonical = official_aliases.get(ident, ident) if isinstance(official_aliases, dict) else ident
+            if (canonical, platform) in targets:
+                removals[canonical, platform] = max(removed, removals.get((canonical, platform), 0))
+        output['officialListingRemovals'] = [{'id': ident, 'platform': platform, 'removedAt': removed}
+                                            for (ident, platform), removed in sorted(removals.items())]
+        output, _ = apply_official_listings(output, records, now)
+        set_meta(db, 'official_listing_aliases_v1', output['officialListingAliases'])
+        db.commit()
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix('.tmp')

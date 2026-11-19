@@ -1,0 +1,29 @@
+[
+  {
+    "id": "motn:official-hotstar-1271718279",
+    "platform": "JioHotstar",
+    "platformTitleId": "1271718279",
+    "title": "Mr & Mrs Office",
+    "type": "Series",
+    "year": 2026,
+    "sourceURL": "https://www.hotstar.com/in/shows/mr-and-mrs-office/1271718279",
+    "releaseDate": "2026-11-18",
+    "releaseEvidenceURL": "https://moviesandtv.myvi.in/tvshow/hs-1271718279",
+    "verifiedAt": 1795029145,
+    "expiresAt": 1797621145,
+    "access": {
+      "type": "subscription",
+      "evidenceURL": "https://cdn.jiostar.com/jiostar/wp-content/uploads/2026/01/JioHotstar-Introduces-Monthly-Plans.pdf"
+    },
+    "audio": [
+      "Hindi",
+      "Telugu",
+      "Tamil",
+      "Kannada",
+      "Malayalam"
+    ],
+    "audioEvidenceURL": "https://moviesandtv.myvi.in/tvshow/hs-1271718279",
+    "originalLanguage": null,
+    "originalLanguageEvidenceURL": null
+  }
+]
