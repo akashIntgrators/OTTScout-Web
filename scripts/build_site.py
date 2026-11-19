@@ -354,7 +354,7 @@ def build(root=ROOT, now=None):
                     official_source = '<p><a href="'+escape(evidence,quote=True)+'">Official listing</a> · Reviewed '+checked_date(o.get('availabilityCheckedAt'),now)+'. Playback not independently verified.</p>'
                     audio_evidence = safe_link(o.get('audioSourceURL'))
                     if audio_evidence:
-                        official_source += '<p><a href="'+escape(audio_evidence,quote=True)+'">Reported audio languages: official distributor listing</a>. Confirm the track in the player.</p>'
+                        official_source += '<p><a href="'+escape(audio_evidence,quote=True)+'">Reported audio languages: official listing</a>. Confirm the track in the player.</p>'
                 rows.append(f'<li>{provider}<p>{escape(names.get(o.get("type"), "Offer unverified"))}{(" · " + escape(o["addon"])) if o.get("addon") else ""}</p><p>Audio: {escape(" · ".join(language_label(v) for v in o["audio"]) or "Unverified")}</p><p>Subtitles: {escape(" · ".join(language_label(v) for v in o.get("subtitles", [])) or "Unverified")}</p>{official_source}{ad}</li>')
             issue_body = f"Title: {t['title']}\nCatalogue ID: {t['id']}\nPage: {BASE + title_path(t)}\nOriginal language listed: {t.get('originalLanguage') or 'Unverified'}\n\nWhat is incorrect?\n\nCorrection and source:\n"
             report_url = 'https://github.com/akashIntgrators/OTTScout-Web/issues/new?' + urlencode({'title':'Incorrect details: '+t['title'], 'body':issue_body})

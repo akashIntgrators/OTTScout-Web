@@ -25,5 +25,80 @@
     "audioEvidenceURL": "https://moviesandtv.myvi.in/tvshow/hs-1271718279",
     "originalLanguage": null,
     "originalLanguageEvidenceURL": null
+  },
+  {
+    "id": "motn:official-netflix-81749470",
+    "platform": "Netflix",
+    "platformTitleId": "81749470",
+    "title": "Guarding Stars",
+    "type": "Movie",
+    "year": 2026,
+    "sourceURL": "https://www.netflix.com/in/title/81749470",
+    "releaseDate": "2026-11-18",
+    "releaseEvidenceURL": "https://www.netflix.com/tudum/articles/new-on-netflix",
+    "verifiedAt": 1795081530,
+    "expiresAt": 1797673530,
+    "access": {
+      "type": "subscription",
+      "evidenceURL": "https://www.netflix.com/in/title/81749470"
+    },
+    "audio": [
+      "English",
+      "Hindi",
+      "Tamil",
+      "Telugu"
+    ],
+    "audioEvidenceURL": "https://www.netflix.com/in/title/81749470",
+    "originalLanguage": "English",
+    "originalLanguageEvidenceURL": "https://www.netflix.com/in/title/81749470"
+  },
+  {
+    "id": "motn:official-netflix-81681910",
+    "platform": "Netflix",
+    "platformTitleId": "81681910",
+    "title": "The Altruists",
+    "type": "Series",
+    "year": 2026,
+    "sourceURL": "https://www.netflix.com/in/title/81681910",
+    "releaseDate": "2026-11-19",
+    "releaseEvidenceURL": "https://www.netflix.com/tudum/articles/the-altruists-cast-release-date-news",
+    "verifiedAt": 1795081530,
+    "expiresAt": 1797673530,
+    "access": {
+      "type": "subscription",
+      "evidenceURL": "https://www.netflix.com/in/title/81681910"
+    },
+    "audio": [
+      "English",
+      "Hindi",
+      "Tamil",
+      "Telugu"
+    ],
+    "audioEvidenceURL": "https://www.netflix.com/in/title/81681910",
+    "originalLanguage": "English",
+    "originalLanguageEvidenceURL": "https://www.netflix.com/in/title/81681910"
+  },
+  {
+    "id": "motn:official-sonyliv-1790007924",
+    "platform": "SonyLIV",
+    "platformTitleId": "1790007924",
+    "title": "Lo Chudail Chali Sasural",
+    "type": "Series",
+    "year": 2026,
+    "sourceURL": "https://www.sonyliv.com/shows/lo-chudail-chali-sasural-1790007924",
+    "releaseDate": "2026-11-18",
+    "releaseEvidenceURL": "https://www.sonyliv.com/trailer/lo-chudail-chali-sasural-trailer-6-1090551128?watch=true",
+    "verifiedAt": 1795081530,
+    "expiresAt": 1797673530,
+    "access": {
+      "type": "subscription",
+      "evidenceURL": "https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html"
+    },
+    "audio": [
+      "Hindi"
+    ],
+    "audioEvidenceURL": "https://www.sonyliv.com/shows/lo-chudail-chali-sasural-1790007924",
+    "originalLanguage": null,
+    "originalLanguageEvidenceURL": null
   }
 ]

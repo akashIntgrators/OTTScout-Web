@@ -8,7 +8,8 @@ from urllib.parse import parse_qs, urlparse
 DAY = 86400
 IST = timezone(timedelta(hours=5, minutes=30))
 LANGUAGES = {'English', 'Hindi', 'Telugu', 'Tamil', 'Kannada', 'Malayalam'}
-SERVICES = {'JioHotstar':'hotstar', 'Netflix':'netflix'}
+SERVICES = {'JioHotstar':'hotstar', 'Netflix':'netflix', 'SonyLIV':'sonyliv'}
+SERVICE_PLATFORMS = {service:platform for platform,service in SERVICES.items()}
 PLATFORMS = {'Netflix','Prime Video','Sun NXT','JioHotstar','ZEE5','aha','SonyLIV'}
 MIXED_SOURCE = {'name':'OTTScout provider and official listings','url':'https://ottscout.techiwithhelmet.com/about/'}
 KEYS = {'id','platform','platformTitleId','title','type','year','sourceURL','releaseDate','releaseEvidenceURL',
@@ -56,6 +57,14 @@ def _identity(value, platform, kind, canonical=False):
         elif len(parts)==2 and parts[0] in ('title','watch'): ident=parts[1]
         elif len(parts)==3 and parts[:2] in (['in','title'],['in','watch']): ident=parts[2]
         else:return None
+    elif platform=='SonyLIV' and kind=='Series' and url.hostname in ('sonyliv.com','www.sonyliv.com'):
+        if url.query not in ('','watch=true'):return None
+        if len(parts) not in (2,3) or parts[0]!='shows':return None
+        show=re.fullmatch(r'[a-zA-Z0-9-]+-([0-9]{1,30})',parts[1])
+        if not show:return None
+        if len(parts)==3 and not re.fullmatch(r'[a-zA-Z0-9-]+-[0-9]{1,30}',parts[2]):return None
+        if canonical and (url.hostname!='www.sonyliv.com' or len(parts)!=2 or url.path!='/'+'/'.join(parts)):return None
+        ident=show[1]
     else:return None
     return ident if re.fullmatch(r'[0-9]{1,30}',ident) else None
 
@@ -63,8 +72,17 @@ def _identity(value, platform, kind, canonical=False):
 def _evidence(value, row, purpose):
     url=_url(value)
     if not url:return False
+    if row['platform']=='SonyLIV' and purpose=='access':
+        return value=='https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html' and row['access']['type']=='subscription'
     if _identity(value,row['platform'],row['type'])==row['platformTitleId']:
         return True
+    if purpose=='release' and row['platform']=='SonyLIV' and row['type']=='Series' and url.hostname in ('sonyliv.com','www.sonyliv.com'):
+        source=_url(row['sourceURL'])
+        slug=source.path.split('/')[-1].rsplit('-',1)[0] if source else ''
+        return url.query in ('','watch=true') and bool(re.fullmatch(r'/trailer/'+re.escape(slug)+r'-trailer(?:-[0-9]+)?-[0-9]{1,30}',url.path))
+    if purpose=='release' and row['platform']=='Netflix' and not url.query:
+        if url.hostname in ('netflix.com','www.netflix.com') and re.fullmatch(r'/tudum/articles/[a-z0-9]+(?:-[a-z0-9]+)*',url.path):return True
+        if url.hostname=='about.netflix.com' and re.fullmatch(r'/en/news/[a-z0-9]+(?:-[a-z0-9]+)*',url.path):return True
     if row['platform']=='JioHotstar':
         if purpose in ('release','original','access') and url.hostname=='cdn.jiostar.com':
             return not url.query and url.path.lower().endswith('.pdf') and (purpose!='access' or url.path.startswith('/jiostar/'))
@@ -117,7 +135,7 @@ def _merge_unique(items):
 
 
 def _title_id(value):
-    return _text(value,100) and bool(re.fullmatch(r'motn:(?:[0-9]+|official-(?:hotstar|netflix)-[0-9]+)',value))
+    return _text(value,100) and bool(re.fullmatch(r'motn:(?:[0-9]+|official-(?:hotstar|netflix|sonyliv)-[0-9]+)',value))
 
 
 def _resolve_alias(ident, aliases):
@@ -135,10 +153,10 @@ def _apply_title_aliases(titles, aliases, now):
         canonical=_resolve_alias(target,aliases)
         if not key.startswith('motn:'):
             service,ident=key.split(':',1)
-            anchors.setdefault(canonical,set()).add(({'hotstar':'JioHotstar','netflix':'Netflix'}[service],ident))
-        embedded=re.fullmatch(r'motn:official-(hotstar|netflix)-([0-9]+)',canonical)
+            anchors.setdefault(canonical,set()).add((SERVICE_PLATFORMS[service],ident))
+        embedded=re.fullmatch(r'motn:official-(hotstar|netflix|sonyliv)-([0-9]+)',canonical)
         if embedded:
-            anchors.setdefault(canonical,set()).add(({'hotstar':'JioHotstar','netflix':'Netflix'}[embedded[1]],embedded[2]))
+            anchors.setdefault(canonical,set()).add((SERVICE_PLATFORMS[embedded[1]],embedded[2]))
     for title in titles:
         canonical=_resolve_alias(title['id'],aliases)
         # An explicitly different current platform ID is a conflict; absence of
@@ -193,7 +211,7 @@ def apply_official_listings(catalog, records, now):
     _require(isinstance(records,list) and len(records)<=100,'Invalid official registry')
     output=deepcopy(catalog)
     aliases=output.get('officialListingAliases',{})
-    _require(isinstance(aliases,dict) and len(aliases)<=1000 and all(_text(k,100) and (_title_id(k) or bool(re.fullmatch(r'(?:hotstar|netflix):[0-9]{1,30}',k))) and _title_id(v) for k,v in aliases.items()),'Invalid existing official aliases')
+    _require(isinstance(aliases,dict) and len(aliases)<=1000 and all(_text(k,100) and (_title_id(k) or bool(re.fullmatch(r'(?:hotstar|netflix|sonyliv):[0-9]{1,30}',k))) and _title_id(v) for k,v in aliases.items()),'Invalid existing official aliases')
     for value in list(aliases):aliases[value]=_resolve_alias(aliases[value],aliases)
     raw_removals=output.get('officialListingRemovals',[])
     _require(isinstance(raw_removals,list) and len(raw_removals)<=1000,'Invalid official removal signals')
