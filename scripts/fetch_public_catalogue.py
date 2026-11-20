@@ -2,7 +2,8 @@
 import argparse
 import json
 from pathlib import Path
-from urllib.error import HTTPError
+import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 try:
@@ -22,17 +23,24 @@ class SiteRedirects(HTTPRedirectHandler):
 
 
 def get_json(path, limit, optional=False):
-    try:
-        request = Request(BASE + path, headers={'Accept': 'application/json', 'Cache-Control': 'no-cache', 'User-Agent': 'OTTScout-monitor/1.0'})
-        with build_opener(SiteRedirects()).open(request, timeout=60) as response:
-            data = response.read(limit + 1)
-        if len(data) > limit:
-            raise ValueError('Oversized public snapshot')
-        return json.loads(data)
-    except HTTPError as error:
-        if optional and error.code == 404:
-            return None
-        raise
+    for attempt in range(3):
+        try:
+            suffix = '?snapshot_retry=' + str(time.time_ns()) if attempt else ''
+            request = Request(BASE + path + suffix, headers={'Accept': 'application/json', 'Cache-Control': 'no-cache', 'User-Agent': 'OTTScout-monitor/1.0'})
+            with build_opener(SiteRedirects()).open(request, timeout=30) as response:
+                data = response.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError('Oversized public snapshot')
+            return json.loads(data)
+        except HTTPError as error:
+            if optional and error.code == 404:
+                return None
+            if error.code not in (408, 425, 429, 500, 502, 503, 504) or attempt == 2:
+                raise
+        except (URLError, TimeoutError):
+            if attempt == 2:
+                raise
+        time.sleep(attempt + 1)
 
 
 def main(argv=None):
@@ -44,11 +52,19 @@ def main(argv=None):
     if not isinstance(catalog, dict) or catalog.get('schemaVersion') != 1 or catalog.get('mode') != 'live' or not catalog.get('titles'):
         raise ValueError('Invalid public catalogue snapshot')
     discovery = get_json('/data/official-discovered.json', 1_000_000, optional=True)
-    health = get_json('/data/catalogue-health.json', 5_000_000, optional=True)
+    try:
+        health = get_json('/data/catalogue-health.json', 5_000_000, optional=True)
+        if health is not None and not isinstance(health, dict):
+            raise ValueError('Invalid public status report')
+    except (OSError, ValueError):
+        # Status is an observation, not catalogue evidence. In particular a
+        # brand-new status endpoint may be unavailable before first publication.
+        # Fresh collector inputs can still establish health; a watchdog without
+        # source observations stays unknown/critical instead of inventing them.
+        health = None
+        print('Previous public status unavailable; fresh monitoring evidence is required.')
     if discovery is not None and (not isinstance(discovery, list) or len(discovery) > 100):
         raise ValueError('Invalid public official evidence registry')
-    if health is not None and not isinstance(health, dict):
-        raise ValueError('Invalid public status report')
     curated_path = root / 'data/official-listings.json'
     curated = json.loads(curated_path.read_text()) if curated_path.exists() else []
     reviewed = {SERVICES.get(row['platform'], row['platform']) + ':' + row['platformTitleId']: row for row in curated}
