@@ -317,13 +317,15 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(client.calls,0,'Manual/scheduled repeat cannot spend another new-page allowance')
         tomorrow=NOW+sync.DAY
         with patch.object(sync.time,'time',return_value=tomorrow), patch.object(sync,'urlopen',side_effect=reply):
-            self.assertEqual(sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),tomorrow),0)
-        self.assertEqual(requested[-1]['cursor'],'2')
-        self.assertEqual(int(requested[-1]['to']),state['to'],'A resumed query retains its frozen end')
+            with self.assertRaises(sync.BudgetReached):sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),tomorrow)
+        self.assertEqual(requested[-2]['cursor'],'2')
+        self.assertEqual(int(requested[-2]['to']),state['to'],'A resumed query retains its frozen end')
+        self.assertNotIn('cursor',requested[-1],'The current window starts immediately after the old one completes')
+        self.assertEqual(int(requested[-1]['to']),tomorrow)
         self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
-        self.assertIsNone(sync.get_meta(self.db,'change_window_v2:new'))
-        self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),1)
-        self.assertEqual(sync.request_budget(self.db,tomorrow)['requestsUsed'],372)
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new')['pages'],1)
+        self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),2)
+        self.assertEqual(sync.request_budget(self.db,tomorrow)['requestsUsed'],373)
 
     def test_conservation_failed_new_attempts_consume_the_daily_allowance_before_network(self):
         self.prepared_catalogue()
@@ -384,7 +386,7 @@ class BudgetTests(unittest.TestCase):
              patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=self.reply), \
              patch.object(sync,'recheck_reported_titles',return_value=0) as recheck, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(sync.main(),0)
-            recheck.assert_called_once()
+            recheck.assert_not_called()
         exported=json.loads(output.read_text());reported=json.loads(report.read_text())
         self.assertEqual(reported['runs'][-1]['status'],'limited')
         self.assertIn('Quota conservation',reported['runs'][-1]['message'])
@@ -446,22 +448,22 @@ class BudgetTests(unittest.TestCase):
         self.prepared_catalogue()
         records = [{'netflixId': '123', 'title': 'Fixture'}]
         with patch.object(sync.time, 'time', return_value=NOW), patch.object(sync, 'urlopen', side_effect=self.reply) as network:
-            with self.assertRaises(sync.BudgetReached):
-                sync.recheck_reported_titles(self.db, sync.Client(self.db, 'fixture-not-a-key', monthly_limit=0), NOW, records)
+            self.assertEqual(sync.recheck_reported_titles(self.db, sync.Client(self.db, 'fixture-not-a-key', monthly_limit=0), NOW, records), 0)
             self.assertIsNone(sync.get_meta(self.db, 'title_recheck_last_attempt'))
             network.assert_not_called()
             sync.recheck_reported_titles(self.db, sync.Client(self.db, 'fixture-not-a-key'), NOW, records)
             self.assertEqual(network.call_count, 1)
 
-    def test_new_pages_and_failed_title_lookups_share_the_same_conservation_allowance(self):
+    def test_conservation_lookups_do_not_spend_the_new_page_allowance(self):
         self.prepared_catalogue();self.attempts(NOW-1,369)
-        with patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',side_effect=[Response({'shows':{},'changes':[],'hasMore':False}),URLError('fixture offline')]) as network:
+        with patch.object(sync.time,'time',return_value=NOW), patch.object(sync,'urlopen',return_value=Response({'shows':{},'changes':[],'hasMore':False})) as network:
             client=sync.Client(self.db,'fixture-not-a-key')
             client.get('/changes',{'change_type':'new'})
-            with self.assertRaises(sync.SyncError):client.get('/shows/search/title',{'title':'Missing'})
-            for endpoint,params in [('/changes',{'change_type':'new'}),('/shows/search/title',{'title':'Another'})]:
-                with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
-                    sync.Client(self.db,'fixture-not-a-key').get(endpoint,params)
+            with self.assertRaisesRegex(sync.BudgetReached,'lookups deferred'):
+                client.get('/shows/search/title',{'title':'Missing'})
+            client.get('/changes',{'change_type':'new'})
+            with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
+                sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
         self.assertEqual(network.call_count,2)
         self.assertEqual((sync.request_budget(self.db,NOW)['requestsUsed'],sync.new_feed_requests_today(self.db,NOW)),(371,2))
 
@@ -474,20 +476,21 @@ class BudgetTests(unittest.TestCase):
         with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen') as network:
             self.assertEqual(sync.request_budget(self.db,NOW)['newFeedRequestsToday'],2)
             for endpoint,params in [('/changes',{'change_type':'new'}),('/shows/search/title',{'title':'Missing'})]:
-                with self.assertRaisesRegex(sync.BudgetReached,'next UTC day'):
+                with self.assertRaises(sync.BudgetReached):
                     sync.Client(self.db,'fixture-not-a-key').get(endpoint,params)
             network.assert_not_called()
         self.assertEqual(sync.get_meta(self.db,'new_feed_attempts_v1'),legacy)
         self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],369)
 
     def test_first_title_request_initializes_shared_counter_once_without_double_counting_its_ledger_row(self):
-        self.prepared_catalogue();self.attempts(NOW-1,369)
+        self.prepared_catalogue();self.attempts(NOW-1,100)
         with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',return_value=Response([])) as network:
             sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Missing'})
             self.assertEqual(sync.new_feed_requests_today(self.db,NOW),1)
             self.assertEqual(sync.get_meta(self.db,'new_release_attempts_v2'),{'utcDay':NOW//sync.DAY,'attempts':1})
             sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
             self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
+            self.attempts(NOW-1,269)
             with self.assertRaises(sync.BudgetReached):
                 sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Another'})
         self.assertEqual(network.call_count,2)
@@ -502,13 +505,13 @@ class BudgetTests(unittest.TestCase):
         tomorrow=(NOW//sync.DAY+1)*sync.DAY
         self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),0)
         with patch.object(sync.time,'time',return_value=tomorrow),patch.object(sync,'urlopen',return_value=Response([])):
-            sync.Client(self.db,'fixture-not-a-key').get('/shows/search/title',{'title':'Missing'})
+            sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
         self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),1)
         self.assertEqual(sync.get_meta(self.db,'new_release_attempts_v2'),{'utcDay':tomorrow//sync.DAY,'attempts':1})
         self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],370)
 
     def test_optional_malformed_lookup_keeps_completed_new_feed_and_runs_before_maintenance(self):
-        self.prepared_catalogue();self.attempts(NOW-1,369)
+        self.prepared_catalogue()
         sync.set_meta(self.db,'watermark:new',NOW-sync.DAY);self.db.commit()
         records=[{'title':'Mr & Mrs Office','platform':'JioHotstar','showType':'series','platformTitleId':'1271718279',
                   'sourceURL':'https://www.hotstar.com/in/shows/mr-and-mrs-office/1271718279'}]
@@ -521,7 +524,7 @@ class BudgetTests(unittest.TestCase):
                 return Response({'shows':{'newest':item},'changes':[],'hasMore':False})
             return Response({'invalid':'provider search response'})
         actual=sync.recheck_reported_titles
-        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',side_effect=reply), \
+        with patch.dict(os.environ,{'CATALOG_BACKFILL_PAGES':'0'},clear=True), patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',side_effect=reply), \
              patch.object(sync,'recheck_reported_titles',side_effect=lambda db,client,at:actual(db,client,at,records)):
             self.assertEqual(sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),NOW,recheck_reports=True),1)
         self.assertEqual([path for path,_ in calls],['/v4/changes','/v4/shows/search/title'])
@@ -532,15 +535,14 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(sync.get_meta(self.db,'title_recheck:hotstar:1271718279')['status'],'lookup_failed')
         self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
 
-    def test_new_feed_uses_run_budget_before_a_reported_lookup_and_blocked_report_does_not_claim_attempt(self):
+    def test_conservation_new_feed_skips_reported_lookup_without_claiming_an_attempt(self):
         self.prepared_catalogue();self.attempts(NOW-1,369)
         sync.set_meta(self.db,'watermark:new',NOW-sync.DAY);self.db.commit()
         records=[{'title':'Fixture','netflixId':'123'}]
         actual=sync.recheck_reported_titles
         with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',side_effect=self.reply), \
              patch.object(sync,'recheck_reported_titles',side_effect=lambda db,client,at:actual(db,client,at,records)):
-            with self.assertRaises(sync.BudgetReached):
-                sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key',run_limit=1),NOW,recheck_reports=True)
+            self.assertEqual(sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key',run_limit=1),NOW,recheck_reports=True),0)
         self.assertEqual(len(self.requests),1)
         self.assertEqual(self.requests[0][1]['change_type'],'new')
         self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
@@ -571,6 +573,172 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(self.db.execute('SELECT requests FROM runs ORDER BY id DESC LIMIT 1').fetchone()[0], 12)
         self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0], 12)
         self.assertEqual(json.loads(report_path.read_text())['requestsThisMonth'], 12)
+
+    def test_adaptive_capacity_tiers_keep_today_useful_without_claiming_an_unaffordable_future_plan(self):
+        cases=[('2026-11-04T06:50:00+00:00',226,4,6,106,2,False),
+               ('2026-11-20T17:00:00+00:00',26,2,6,22,2,True),
+               ('2026-11-04T06:50:00+00:00',31,1,2,28,2,True),
+               ('2026-11-04T06:50:00+00:00',10,0,1,9,1,True),
+               ('2026-11-30T23:59:00+00:00',1,4,6,0,0,False)]
+        for date,remaining,planned,limit,floor,emergency,insufficient in cases:
+            with self.subTest(date=date,remaining=remaining):
+                self.db.execute('DELETE FROM requests');self.db.execute('DELETE FROM meta');self.db.commit()
+                at=epoch(date);self.attempts(at-1,400-remaining)
+                budget=sync.request_budget(self.db,at)
+                self.assertEqual((budget['plannedPerFutureDay'],budget['newFeedDailyLimit'],budget['protectedFutureRequests'],
+                                  budget['emergencyReserve'],budget['capacityInsufficient']),
+                                 (planned,limit,floor,emergency,insufficient))
+                self.assertGreater(budget['newFeedRequestsRemainingToday'],0,'An unaffordable ideal plan must not freeze all current checks')
+                self.assertEqual(budget['protectedFutureDailyTarget'],4)
+
+    def test_reserve_tier_does_not_downgrade_after_spending_and_unlock_protected_requests(self):
+        at=epoch('2026-11-20T17:00:00+00:00');self.attempts(at-1,377)
+        with patch.object(sync.time,'time',return_value=at),patch.object(sync,'urlopen',return_value=Response({})) as network:
+            sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+            budget=sync.request_budget(self.db,at)
+            self.assertEqual((budget['requestsRemaining'],budget['plannedPerFutureDay'],budget['protectedFutureRequests']),(22,2,22))
+            with self.assertRaises(sync.BudgetReached):sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+        self.assertEqual(network.call_count,1)
+
+    def test_live_november_backlog_publishes_four_more_pages_today_and_preserves_twenty_two_requests(self):
+        self.prepared_catalogue()
+        at=epoch('2026-11-20T17:00:00+00:00');self.attempts(at-1,374)
+        sync.set_meta(self.db,'new_release_attempts_v2',{'utcDay':at//sync.DAY,'attempts':2})
+        pending=self.pending('new',at,pages=2);pending['publishedPages']=2
+        sync.set_meta(self.db,'change_window_v2:new',pending)
+        for kind in ('new','updated','removed'):sync.set_meta(self.db,'watermark:'+kind,at-sync.DAY)
+        self.db.commit()
+        calls=[]
+        def reply(request,**kwargs):
+            params={key:value[0] for key,value in parse_qs(urlparse(request.full_url).query).items()};calls.append(params)
+            self.assertEqual(params['change_type'],'new')
+            index=int(params['cursor'])+1;ident='fresh'+str(index)
+            item={'id':ident,'title':ident,'showType':'movie','streamingOptions':{'in':[{'service':{'id':'netflix'},'type':'subscription',
+                  'audios':[{'language':'eng'}],'subtitles':[],'availableSince':at-1000}]}}
+            return Response({'shows':{ident:item},'changes':[{'showId':ident,'service':{'id':'netflix'},'timestamp':at-1000}],
+                             'hasMore':True,'nextCursor':str(index)})
+        with patch.object(sync.time,'time',return_value=at),patch.object(sync,'urlopen',side_effect=reply):
+            with self.assertRaises(sync.BudgetReached):sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),at,recheck_reports=True)
+            self.db.rollback()
+            self.assertEqual(sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),at,recheck_reports=True),0)
+        self.assertEqual(len(calls),4)
+        self.assertEqual([row[0] for row in self.db.execute('SELECT id FROM titles ORDER BY id')],['motn:fresh3','motn:fresh4','motn:fresh5','motn:fresh6'])
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0],4)
+        state=sync.get_meta(self.db,'change_window_v2:new')
+        self.assertEqual((state['cursor'],state['pages'],state['publishedPages']),('6',6,6))
+        self.assertEqual((state['from'],state['to']),(pending['from'],pending['to']))
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),at-sync.DAY)
+        budget=sync.request_budget(self.db,at)
+        self.assertEqual((budget['requestsUsed'],budget['requestsRemaining'],budget['newFeedRequestsToday']),(378,22,6))
+        self.assertGreaterEqual(budget['requestsRemaining'],2*10+2)
+        self.assertEqual(budget['newFeedRequestsRemainingToday'],0)
+
+    def test_adaptive_failed_attempts_count_before_io_and_restarts_cannot_spend_a_seventh_daily_request(self):
+        at=epoch('2026-11-20T17:00:00+00:00');self.attempts(at-1,374)
+        sync.set_meta(self.db,'new_release_attempts_v2',{'utcDay':at//sync.DAY,'attempts':2});self.db.commit()
+        with patch.object(sync.time,'time',return_value=at),patch.object(sync,'urlopen',side_effect=URLError('offline')) as network:
+            for _ in range(4):
+                with self.assertRaises(sync.SyncError):sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+            with self.assertRaises(sync.BudgetReached):sync.Client(self.db,'fixture-not-a-key').get('/changes',{'change_type':'new'})
+        self.assertEqual(network.call_count,4)
+        self.assertEqual((sync.request_budget(self.db,at)['requestsUsed'],sync.new_feed_requests_today(self.db,at)),(378,6))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests WHERE status=0').fetchone()[0],4)
+
+    def test_backlog_blocks_optional_paid_endpoints_even_with_plentiful_monthly_budget(self):
+        self.prepared_catalogue();self.pending('new',pages=0)
+        with patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen') as network:
+            for endpoint,params in [('/shows/search/title',{'title':'Optional'}),('/shows/search/filters',{}),
+                                    ('/changes',{'change_type':'updated'}),('/changes',{'change_type':'removed'})]:
+                with self.subTest(endpoint=endpoint,params=params),self.assertRaises(sync.BudgetReached):
+                    sync.Client(self.db,'fixture-not-a-key').get(endpoint,params)
+            network.assert_not_called()
+        self.assertEqual(sync.request_budget(self.db,NOW)['backfillAvailable'],0)
+
+    def test_limited_main_exports_committed_new_pages_and_reports_real_changes_before_window_completion(self):
+        self.prepared_catalogue();self.attempts(NOW-1,369)
+        sync.set_meta(self.db,'watermark:new',NOW-sync.DAY);self.db.commit()
+        def reply(request,**kwargs):
+            params={key:value[0] for key,value in parse_qs(urlparse(request.full_url).query).items()}
+            index=int(params.get('cursor','0'))+1;ident='published'+str(index)
+            item={'id':ident,'title':ident,'showType':'movie','streamingOptions':{'in':[{'service':{'id':'netflix'},'type':'subscription',
+                  'audios':[{'language':'eng'}],'subtitles':[],'availableSince':NOW-100}]}}
+            return Response({'shows':{ident:item},'changes':[{'showId':ident,'service':{'id':'netflix'},'timestamp':NOW-100}],
+                             'hasMore':True,'nextCursor':str(index)})
+        output=Path(self.temp.name)/'catalog.json';report=Path(self.temp.name)/'report.json'
+        args=['catalog_sync.py','--db',str(Path(self.temp.name)/'catalog.sqlite'),'--export',str(output),'--report',str(report),'--allow-cached-on-limit']
+        with patch.object(sys,'argv',args),patch.dict(os.environ,{'STREAMING_API_KEY':'fixture-not-a-key'},clear=True), \
+             patch.object(sync.time,'time',return_value=NOW),patch.object(sync,'urlopen',side_effect=reply),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sync.main(),0)
+        exported=json.loads(output.read_text());reported=json.loads(report.read_text())
+        self.assertEqual(len(exported['titles']),2)
+        self.assertEqual((reported['runs'][-1]['status'],reported['runs'][-1]['changedRecords']),('limited',2))
+        self.assertEqual(exported['newPublication']['changedRecords'],2)
+        self.assertEqual(exported['streamingFreshness']['new']['publishedPages'],2)
+        self.assertEqual(exported['streamingFreshness']['new']['completedThrough'],sync.stamp(NOW-sync.DAY))
+
+    def test_two_legacy_pages_finish_old_window_then_current_window_uses_safe_catchup_before_maintenance(self):
+        self.prepared_catalogue()
+        at=epoch('2026-11-20T17:00:00+00:00');old_to=epoch('2026-11-19T07:37:00+00:00')
+        self.attempts(at-1,374)
+        sync.set_meta(self.db,'new_release_attempts_v2',{'utcDay':at//sync.DAY,'attempts':2})
+        state={'from':old_to-sync.DAY,'to':old_to,'cursor':'2','seen':['1','2'],'pages':2,'mapping':self.mapping}
+        sync.set_meta(self.db,'change_window_v2:new',state)
+        sync.set_meta(self.db,'watermark:new',old_to-sync.DAY)
+        def page(ident,added,cursor,more):
+            item={'id':ident,'title':ident,'showType':'series','streamingOptions':{'in':[{'service':{'id':'netflix'},'type':'subscription',
+                  'audios':[{'language':'eng'}],'subtitles':[],'availableSince':added}]}}
+            return {'shows':{ident:item},'changes':[{'showId':ident,'service':{'id':'netflix'},'timestamp':added}],
+                    'hasMore':more,'nextCursor':cursor}
+        for index in range(2):
+            self.db.execute('INSERT INTO change_pages VALUES (?,?,?)',('new',index,json.dumps({
+                'page':page('cached'+str(index),old_to-100,str(index+1),True),'checkedAt':old_to})))
+        self.db.commit()
+        calls=[]
+        def reply(request,**kwargs):
+            params={key:value[0] for key,value in parse_qs(urlparse(request.full_url).query).items()};calls.append(params)
+            self.assertEqual(params['change_type'],'new')
+            if int(params['to'])==old_to:
+                number=int(params['cursor'])+1
+                return Response(page('old'+str(number),old_to-10,str(number),number<4))
+            self.assertEqual((int(params['from']),int(params['to'])),(old_to-60,at))
+            number=int(params.get('cursor','0'))+1
+            return Response(page('current'+str(number),at-10,str(number),True))
+        with patch.object(sync.time,'time',return_value=at),patch.object(sync,'urlopen',side_effect=reply):
+            with self.assertRaises(sync.BudgetReached):sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),at,recheck_reports=True)
+        self.db.rollback()
+        self.assertEqual([p.get('cursor') for p in calls],['2','3',None,'1'])
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],6)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0],6)
+        current=sync.get_meta(self.db,'change_window_v2:new')
+        self.assertEqual((current['from'],current['to'],current['pages'],current['publishedPages']),(old_to-60,at,2,2))
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),old_to)
+        self.assertEqual(sync.new_publication(self.db),{'pages':6,'changedRecords':6,'recoveredPages':2,'latestPublishedAt':at})
+        budget=sync.request_budget(self.db,at)
+        self.assertEqual((budget['requestsUsed'],budget['requestsRemaining'],budget['newFeedRequestsToday']),(378,22,6))
+        self.assertEqual(budget['protectedFutureRequests'],22)
+
+    def test_conservation_two_per_future_day_checks_twelve_hour_slots_and_degraded_capacity_uses_daily_slots(self):
+        at=epoch('2026-11-20T17:00:00+00:00');self.attempts(at-1,374)
+        sync.set_meta(self.db,'watermark:new',epoch('2026-11-20T07:37:00+00:00'));self.db.commit()
+        self.assertTrue(sync.change_feed_due(self.db,'new',at,True))
+        self.assertEqual(sync.report(self.db,at)['newCheckHours'],12)
+        sync.set_meta(self.db,'watermark:new',epoch('2026-11-20T13:00:00+00:00'));self.db.commit()
+        self.assertFalse(sync.change_feed_due(self.db,'new',at,True))
+        self.db.execute('DELETE FROM requests');self.db.commit();self.attempts(NOW-1,369)
+        sync.set_meta(self.db,'watermark:new',epoch('2026-11-04T00:01:00+00:00'));self.db.commit()
+        self.assertFalse(sync.change_feed_due(self.db,'new',NOW+6*3600,True))
+        self.assertEqual(sync.report(self.db,NOW)['newCheckHours'],24)
+
+    def test_affordable_conservation_plan_preserves_four_daily_checks_and_six_hour_slots(self):
+        self.attempts(NOW-1,174)
+        budget=sync.request_budget(self.db,NOW)
+        self.assertTrue(budget['conservationMode'])
+        self.assertEqual((budget['plannedPerFutureDay'],budget['protectedFutureDailyTarget'],budget['protectedFutureRequests']),(4,4,106))
+        self.assertFalse(budget['capacityInsufficient'])
+        sync.set_meta(self.db,'watermark:new',epoch('2026-11-04T06:50:00+00:00'));self.db.commit()
+        self.assertFalse(sync.change_feed_due(self.db,'new',epoch('2026-11-04T07:00:00+00:00'),True))
+        self.assertTrue(sync.change_feed_due(self.db,'new',epoch('2026-11-04T12:40:00+00:00'),True))
+        self.assertEqual(sync.report(self.db,NOW)['newCheckHours'],6)
 
 
 if __name__ == '__main__':

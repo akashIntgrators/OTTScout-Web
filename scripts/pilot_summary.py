@@ -39,26 +39,44 @@ def build_summary(report):
                   f"| UTC calendar-month limit | {value('monthlyLimit')} |",
                   f"| Used this month | {value('requestsUsed')} |",
                   f"| Remaining this month | {value('requestsRemaining')} |",
-                  f"| Protected freshness reserve, including headroom | {value('freshnessReserve')} |",
+                  f"| Bulk-import freshness reserve, including headroom | {value('freshnessReserve')} |",
                   f"| Headroom already included in reserve | {value('headroom')} |",
                   f"| Maintenance planning allowance per remaining UTC day | {value('maintenanceRequestsPerDay')} |",
                   f"| Available for optional older imports | {value('backfillAvailable')} |", '',
                   'Older imports can use only the allowance above the freshness reserve. The reserve already includes headroom; do not subtract it twice. Actual calls, including failures, still share the monthly and per-run caps.']
         if budget.get('conservationMode'):
-            lines += ['', '**Quota conservation is active:** prioritize new additions; defer availability maintenance and older imports.',
-                      f"- New-release requests today (feed pages or reported-title lookups): {value('newFeedRequestsToday')} / {value('newFeedDailyLimit')}",
-                      f"- New-release requests remaining today: {value('newFeedRequestsRemainingToday')}"]
+            lines += ['', '**Quota conservation is active:** prioritize new additions; defer maintenance, reported-title lookups and older imports.',
+                      f"- Nominal future-day freshness target: {value('protectedFutureDailyTarget')} requests/day",
+                      f"- Affordable plan per future UTC day: {value('plannedPerFutureDay')} requests/day",
+                      f"- Future UTC days protected: {value('protectedFutureDays')}",
+                      f"- Protected future allowance, including emergency reserve: {value('protectedFutureRequests')}",
+                      f"- Emergency reserve already included above: {value('emergencyReserve')}",
+                      f"- Maximum catch-up ceiling when affordable: {value('catchupDailyLimit')} total requests/UTC day",
+                      f"- Fresh requests attempted today (shared durable counter): {value('newFeedRequestsToday')} / {value('newFeedDailyLimit')}",
+                      f"- Fresh requests still spendable today after protecting the future: {value('newFeedRequestsRemainingToday')}",
+                      'Daily capacity pays for pages, not guaranteed complete queries. Do not add the bulk-import reserve and protected future allowance together.']
+            if budget.get('capacityInsufficient') is True:
+                lines.append('**Capacity is insufficient for the nominal freshness target.** The affordable plan is degraded; complete daily coverage is not promised.')
     else:
         lines += ['', 'This report predates the adaptive budget fields; no freshness reserve or backfill allowance is inferred.']
 
     freshness = report.get('streamingFreshness')
     if isinstance(freshness, dict):
         lines += ['', '### Feed completion', '',
-                  '| Feed | Complete through (UTC) | Staged pages | Deferred for quota |',
-                  '| --- | --- | ---: | --- |']
+                  '| Feed | Complete through (UTC) | Downloaded pending pages | Published pending pages | Staged pages | Deferred for quota |',
+                  '| --- | --- | ---: | ---: | ---: | --- |']
         for kind, state in freshness.items():
             pending = state.get('pendingWindow') or {}
-            lines.append(f"| {kind} | {state.get('completedThrough') or 'none'} | {pending.get('pages', 0)} | {'yes' if state.get('deferredByConservation') else 'no'} |")
+            published = state.get('publishedPages', 'not recorded') if kind == 'new' else '—'
+            staged = state.get('stagedPages', 'not recorded') if kind == 'new' else pending.get('pages', 0)
+            lines.append(f"| {kind} | {state.get('completedThrough') or 'none'} | {pending.get('pages', 0)} | {published} | {staged} | {'yes' if state.get('deferredByConservation') else 'no'} |")
+        lines += ['', 'Validated NEW pages publish incrementally with their events and cursor. UPDATE/REMOVED pages wait for their complete frozen window. A published page does not advance a feed completion watermark.']
+
+    publication = report.get('newPublication')
+    if isinstance(publication, dict):
+        lines += ['', f"- Validated NEW pages published (cumulative): {publication.get('pages', 'not recorded')}",
+                  f"- Already-paid legacy pages recovered without API calls (cumulative): {publication.get('recoveredPages', 'not recorded')}",
+                  f"- Changed records applied from NEW pages (cumulative): {publication.get('changedRecords', 'not recorded')}"]
 
     lines += ['', report.get('catalogScope', 'Imported coverage is partial.'), '',
               'Review the report artifact for run history. Scheduled times are approximate. Daily maintenance means the last complete watermark can be older than the latest new-addition check.']

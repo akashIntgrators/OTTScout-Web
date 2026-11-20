@@ -57,9 +57,9 @@ def _identity(value, platform, kind, canonical=False):
         elif len(parts)==2 and parts[0] in ('title','watch'): ident=parts[1]
         elif len(parts)==3 and parts[:2] in (['in','title'],['in','watch']): ident=parts[2]
         else:return None
-    elif platform=='SonyLIV' and kind=='Series' and url.hostname in ('sonyliv.com','www.sonyliv.com'):
+    elif platform=='SonyLIV' and kind in ('Movie','Series') and url.hostname in ('sonyliv.com','www.sonyliv.com'):
         if url.query not in ('','watch=true'):return None
-        if len(parts) not in (2,3) or parts[0]!='shows':return None
+        if len(parts) not in ((2,3) if kind=='Series' else (2,)) or parts[0]!=('shows' if kind=='Series' else 'movies'):return None
         show=re.fullmatch(r'[a-zA-Z0-9-]+-([0-9]{1,30})',parts[1])
         if not show:return None
         if len(parts)==3 and not re.fullmatch(r'[a-zA-Z0-9-]+-[0-9]{1,30}',parts[2]):return None
@@ -73,7 +73,8 @@ def _evidence(value, row, purpose):
     url=_url(value)
     if not url:return False
     if row['platform']=='SonyLIV' and purpose=='access':
-        return value=='https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html' and row['access']['type']=='subscription'
+        return row['access']['type']=='subscription' and (value=='https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html'
+            or _identity(value,row['platform'],row['type'],True)==row['platformTitleId'])
     if _identity(value,row['platform'],row['type'])==row['platformTitleId']:
         return True
     if purpose=='release' and row['platform']=='SonyLIV' and row['type']=='Series' and url.hostname in ('sonyliv.com','www.sonyliv.com'):

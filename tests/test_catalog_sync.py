@@ -381,7 +381,7 @@ class CatalogTests(unittest.TestCase):
         self.assertIsNone(sync.get_meta(self.db,'catalog_backfill_next'))
         self.assertIsNone(self.db.execute("SELECT id FROM titles WHERE id='motn:bad'").fetchone())
 
-    def test_changes_resume_after_budget_without_repeating_pages_or_premature_upserts(self):
+    def test_new_pages_publish_before_completion_and_resume_without_repeating_pages(self):
         sync.set_meta(self.db,'baseline_complete',NOW-100)
         class First:
             calls=0
@@ -392,7 +392,8 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaises(sync.BudgetReached):
             sync.sync_change_feed(self.db,First(),{'Netflix':'netflix'},'new',NOW-100,NOW)
         self.db.rollback()
-        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],1)
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new')['publishedPages'],1)
         self.assertIsNone(sync.get_meta(self.db,'watermark:new'))
         self.db.close();self.db=sync.open_db(self.root/'state.sqlite')
         class Second:
@@ -404,7 +405,7 @@ class CatalogTests(unittest.TestCase):
                 self.assertEqual(params['catalogs'],'netflix')
                 return {'shows':{'two':show('two')},'changes':[{'showId':'two','service':{'id':'netflix'},'timestamp':NOW-5}], 'hasMore':False}
         later=Second()
-        self.assertEqual(sync.sync_change_feed(self.db,later,{'Netflix':'netflix','Prime Video':'prime'},'new',NOW-100,NOW+21600),2)
+        self.assertEqual(sync.sync_change_feed(self.db,later,{'Netflix':'netflix','Prime Video':'prime'},'new',NOW-100,NOW+21600),1)
         self.assertEqual(later.calls,1)
         self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
         self.assertIsNone(sync.get_meta(self.db,'change_window_v2:new'))
@@ -422,6 +423,104 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(sync.get_meta(self.db,'change_window_v2:updated')['pages'],1)
         self.assertIsNone(sync.get_meta(self.db,'watermark:updated'))
         self.assertEqual(self.db.execute('SELECT count(*) FROM change_pages').fetchone()[0],1)
+
+    def legacy_new_page(self, ident='recovered'):
+        mapping={'Netflix':'netflix'}
+        state={'from':NOW-560,'to':NOW,'cursor':'saved-next','seen':['saved-next'],'pages':1,'mapping':mapping}
+        page={'shows':{ident:show(ident)},'changes':[{'showId':ident,'service':{'id':'netflix'},'timestamp':NOW-100}],
+              'hasMore':True,'nextCursor':'saved-next'}
+        sync.set_meta(self.db,'baseline_complete',NOW-1000)
+        sync.set_meta(self.db,'watermark:new',NOW-500)
+        sync.set_meta(self.db,'last_success',NOW-500)
+        sync.set_meta(self.db,'change_window_v2:new',state)
+        self.db.execute('INSERT INTO change_pages VALUES (?,?,?)',('new',0,json.dumps({'page':page,'checkedAt':NOW-50})))
+        self.db.commit()
+        return state
+
+    def test_legacy_staged_new_pages_recover_offline_idempotently_without_advancing_completion(self):
+        state=self.legacy_new_page()
+        with patch.object(sync,'urlopen',side_effect=AssertionError('Recovery cannot use network')):
+            self.assertEqual(sync.flush_staged_new_pages(self.db,NOW),1)
+            self.assertEqual(sync.flush_staged_new_pages(self.db,NOW),0)
+        restored=sync.get_meta(self.db,'change_window_v2:new')
+        self.assertEqual({key:restored[key] for key in state},state)
+        self.assertEqual(restored['publishedPages'],1)
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW-500)
+        self.assertEqual(sync.get_meta(self.db,'last_success'),NOW-500)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0],1)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],0)
+        self.assertEqual(self.db.execute("SELECT count(*) FROM change_pages WHERE kind='new'").fetchone()[0],0)
+        self.assertEqual(sync.new_publication(self.db),{'pages':1,'changedRecords':1,'recoveredPages':1,'latestPublishedAt':NOW})
+
+    def test_export_cached_recovers_already_paid_new_pages_with_no_key_or_remaining_allowance(self):
+        self.legacy_new_page()
+        self.db.executemany('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)',[(NOW-1,'/fixture',200)]*400)
+        self.db.commit()
+        args=['catalog_sync.py','--db',str(self.root/'state.sqlite'),'--export',str(self.root/'catalog.json'),
+              '--report',str(self.root/'report.json'),'--export-cached']
+        with patch.object(sys,'argv',args),patch.dict(os.environ,{},clear=True),patch.object(sync.time,'time',return_value=NOW), \
+             patch.object(sync,'urlopen',side_effect=AssertionError('Cached recovery cannot call the provider')):
+            self.assertEqual(sync.main(),0)
+        output=json.loads((self.root/'catalog.json').read_text())
+        self.assertEqual([title['id'] for title in output['titles']],['motn:recovered'])
+        self.assertEqual(output['updatedAt'],sync.stamp(NOW-500))
+        self.assertEqual(output['titles'][0]['weeklyEvents'],[{'platform':'Netflix','addedAt':NOW-100}])
+        self.assertEqual(output['requestBudget']['requestsUsed'],400)
+        self.assertEqual(output['streamingFreshness']['new']['publishedPages'],1)
+
+    def test_legacy_new_recovery_retains_newer_snapshot_and_still_records_original_event(self):
+        self.legacy_new_page('same')
+        newer=show('same',audio='eng');newer['title']='Newer snapshot'
+        sync.save_show(self.db,newer,{'Netflix':'netflix'},NOW-10);self.db.commit()
+        before=self.db.execute("SELECT body,first_seen,last_checked FROM titles WHERE id='motn:same'").fetchone()
+        self.assertEqual(sync.flush_staged_new_pages(self.db,NOW),0)
+        self.assertEqual(self.db.execute("SELECT body,first_seen,last_checked FROM titles WHERE id='motn:same'").fetchone(),before)
+        self.assertEqual(self.db.execute("SELECT at FROM events WHERE title_id='motn:same'").fetchone()[0],NOW-100)
+
+    def test_malformed_legacy_batch_changes_nothing_and_retains_every_saved_page(self):
+        self.legacy_new_page()
+        state=sync.get_meta(self.db,'change_window_v2:new');state['pages']=2
+        sync.set_meta(self.db,'change_window_v2:new',state)
+        bad={'shows':{'bad':show('bad')},'changes':[{'showId':'bad','timestamp':NOW+1}],'hasMore':True,'nextCursor':'later'}
+        self.db.execute('INSERT INTO change_pages VALUES (?,?,?)',('new',1,json.dumps({'page':bad,'checkedAt':NOW})));self.db.commit()
+        with self.assertRaises(sync.SyncError):sync.flush_staged_new_pages(self.db,NOW)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0],0)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM change_pages').fetchone()[0],2)
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new'),state)
+
+    def test_malformed_later_new_page_cannot_undo_published_page_or_advance_its_cursor(self):
+        sync.set_meta(self.db,'baseline_complete',NOW-1000);sync.set_meta(self.db,'watermark:new',NOW-500);self.db.commit()
+        class Pages:
+            calls=0
+            def get(inner,endpoint,params):
+                inner.calls+=1
+                if inner.calls==1:
+                    return {'shows':{'valid':show('valid')},'changes':[{'showId':'valid','service':{'id':'netflix'},'timestamp':NOW-100}],
+                            'hasMore':True,'nextCursor':'second'}
+                bad=show('invalid');bad['showType']='bogus'
+                return {'shows':{'almost':show('almost'),'invalid':bad},'changes':[],'hasMore':False}
+        with self.assertRaises(sync.SyncError):sync.sync_change_feed(self.db,Pages(),{'Netflix':'netflix'},'new',NOW-500,NOW)
+        self.db.rollback()
+        self.assertEqual([row[0] for row in self.db.execute('SELECT id FROM titles')],['motn:valid'])
+        self.assertEqual(self.db.execute('SELECT count(*) FROM events').fetchone()[0],1)
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new')['cursor'],'second')
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new')['pages'],1)
+        self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW-500)
+
+    def test_new_page_transaction_rolls_back_all_records_and_cursor_on_write_failure(self):
+        class Page:
+            def get(inner,endpoint,params):
+                return {'shows':{'one':show('one'),'two':show('two')},'changes':[],'hasMore':True,'nextCursor':'second'}
+        original=sync.save_show
+        def fail_second(db,item,mapping,at):
+            if item['id']=='two':raise sync.sqlite3.OperationalError('Simulated disk write failure')
+            return original(db,item,mapping,at)
+        with patch.object(sync,'save_show',side_effect=fail_second),self.assertRaises(sync.sqlite3.OperationalError):
+            sync.sync_change_feed(self.db,Page(),{'Netflix':'netflix'},'new',NOW-500,NOW)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM titles').fetchone()[0],0)
+        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new')['pages'],0)
+        self.assertEqual(sync.new_publication(self.db)['pages'],0)
 
     def test_invalid_change_date_never_advances_cursor_or_applies_title(self):
         class Future:
@@ -534,16 +633,16 @@ class ReportedTitleTests(unittest.TestCase):
                 self.assertEqual(sync.recheck_reported_titles(db,Lookup([item]),NOW,[row]),1)
                 self.assertEqual(db.execute('SELECT count(*) FROM events').fetchone()[0],expected)
 
-    def test_unresolved_conservation_report_waits_seven_days_without_using_global_daily_slot(self):
+    def test_unresolved_conservation_report_is_deferred_without_claiming_a_slot_and_resumes_next_month(self):
         db,row,item,Lookup=self.hotstar_case()
         db.executemany('INSERT INTO requests(at,endpoint,status) VALUES (?,?,?)',[(NOW-1,'/fixture',200)]*369);db.commit()
         lookup=Lookup([])
         sync.recheck_reported_titles(db,lookup,NOW,[row])
         sync.recheck_reported_titles(db,lookup,NOW+6*sync.DAY,[row])
+        self.assertEqual(lookup.calls,0)
+        self.assertIsNone(sync.get_meta(db,'title_recheck_last_attempt'))
+        sync.recheck_reported_titles(db,lookup,NOW+8*sync.DAY,[row])
         self.assertEqual(lookup.calls,1)
-        self.assertEqual(sync.get_meta(db,'title_recheck_last_attempt'),NOW)
-        sync.recheck_reported_titles(db,lookup,NOW+7*sync.DAY,[row])
-        self.assertEqual(lookup.calls,2)
 
     def test_exact_provider_identity_and_recent_offer(self):
         with tempfile.TemporaryDirectory() as folder:
