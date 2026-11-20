@@ -9,6 +9,8 @@ node_modules/
 .site/
 
 data/catalog.json
+data/official-discovered.json
+data/catalogue-health.json
 
 /account.js
 

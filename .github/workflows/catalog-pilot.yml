@@ -1,47 +1,48 @@
 name: OTTScout catalog pilot
-
 on:
   schedule:
-    # UTC; 00:00, 06:00, 12:00 and 18:00 IST. GitHub may delay scheduled runs.
+    # UTC; midnight, 6 AM, noon and 6 PM IST. GitHub may delay runs.
     - cron: '30 0,6,12,18 * * *'
   workflow_dispatch:
     inputs:
       initialize:
-        description: 'Initialize the continuous collector if no database exists (first run only)'
+        description: 'Initialize only if no collector state exists'
         type: boolean
         default: false
       catalog_pages:
-        description: 'Older catalogue pages to import, shared across platforms; existing API limits still apply'
+        description: 'Optional older pages; fresh releases and hard caps take priority'
         type: choice
         options: ['6', '2']
         default: '6'
       metadata_only:
-        description: 'Refresh TMDB metadata using cached streaming data; no streaming API requests'
+        description: 'Cached streaming data with a metadata refresh'
+        type: boolean
+        default: false
+      offline_only:
+        description: 'Recover cached pages and check official sites; no movie API calls'
         type: boolean
         default: false
       metadata_ids:
-        description: 'Optional legacy metadata repair: up to five motn:numeric IDs, comma separated'
+        description: 'Optional metadata repair: up to five motn:numeric IDs'
         type: string
         default: ''
       publish:
-        description: 'Publish validated catalog to the website after reviewing provider coverage and terms'
+        description: 'Publish validated catalogue and freshness status'
         type: boolean
         default: false
-
 permissions:
   contents: read
   actions: read
+  issues: write
   pages: write
   id-token: write
-
 concurrency:
   group: ottscout-catalog-pilot
   cancel-in-progress: false
-
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -52,90 +53,181 @@ jobs:
       RUN_REQUEST_LIMIT: ${{ vars.RUN_REQUEST_LIMIT || '12' }}
       CATALOG_BACKFILL_PAGES: ${{ inputs.catalog_pages || vars.CATALOG_BACKFILL_PAGES || '6' }}
       ORIGINAL_LANGUAGE_BACKFILL_PAGES: '0'
+      GH_TOKEN: ${{ github.token }}
+      ALERT_REPO: ${{ github.repository }}
+      ALERT_OWNER: ${{ github.repository_owner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '24', cache: npm}
+      - run: npm ci
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Restore pilot database
+        with: {python-version: '3.12'}
+      - name: Check logic before using quota
+        run: python -m unittest discover -s tests -v
+      - name: Keep the published snapshot available during recovery
+        id: snapshot
+        run: python scripts/fetch_public_catalogue.py
+      - name: Restore ledger and source checkpoints
         uses: actions/cache/restore@v4
         with:
           path: .state
           key: ottscout-pilot-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ottscout-pilot-v1-
-      - name: Check catalog and record usage
+      - name: Collect new releases within the hard limits
         id: checker
-        shell: bash
+        continue-on-error: true
         env:
           INITIALIZE: ${{ inputs.initialize }}
           METADATA_ONLY: ${{ inputs.metadata_only }}
+          OFFLINE_ONLY: ${{ inputs.offline_only }}
+        shell: bash
         run: |
           args=()
           if [[ "$INITIALIZE" == 'true' ]]; then args+=(--initialize); fi
-          if [[ "$METADATA_ONLY" == 'true' ]]; then
+          if [[ "$METADATA_ONLY" == 'true' || "$OFFLINE_ONLY" == 'true' ]]; then
             python scripts/catalog_sync.py --export-cached
           else
             python scripts/catalog_sync.py --allow-cached-on-limit "${args[@]}"
           fi
-      - name: Enrich original language and genres from TMDB
-        if: success()
-        env:
-          TMDB_REFRESH_IDS: ${{ inputs.metadata_only != true && inputs.metadata_ids || '' }}
-          TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
-          TMDB_RUN_REQUEST_LIMIT: ${{ vars.TMDB_RUN_REQUEST_LIMIT || '300' }}
-        run: python scripts/tmdb_enrich.py
-      - name: Preserve pilot database, including request usage after failures
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: .state
-          key: ottscout-pilot-v1-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Write run summary
-        if: always()
-        run: python scripts/pilot_summary.py
-      - name: Keep usage report (contains no API key or raw catalog)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pilot-report-${{ github.run_id }}-${{ github.run_attempt }}
-          path: reports/pilot.json
-          if-no-files-found: ignore
-          retention-days: 35
-      - name: Decide whether this run may publish
-        id: publication
-        if: success()
+      - name: Recover validated pages after a later collection failure
+        id: recovery
+        if: always() && steps.checker.outcome == 'failure'
+        continue-on-error: true
+        run: python scripts/catalog_sync.py --export-cached
+      - name: Decide whether optional metadata may use this run
+        id: metadata
         env:
           METADATA_ONLY: ${{ inputs.metadata_only }}
-        shell: bash
+          OFFLINE_ONLY: ${{ inputs.offline_only }}
         run: |
           python - <<'PYCODE' >> "$GITHUB_OUTPUT"
           import json, os
           from pathlib import Path
-          report = json.loads(Path('reports/pilot.json').read_text())
-          eligible = os.environ.get('METADATA_ONLY') == 'true' or (report['runs'] and report['runs'][-1]['status'] in ('success', 'limited'))
-          print('ready=' + str(bool(eligible and report['lastSuccessfulUpdate'] and Path('data/catalog.json').exists())).lower())
+          path = Path('reports/pilot.json')
+          report = json.loads(path.read_text()) if path.exists() else {}
+          budget = report.get('requestBudget', {})
+          pending = report.get('pendingChangeQueries', {}).get('new')
+          allowed = os.environ.get('OFFLINE_ONLY') != 'true' and (os.environ.get('METADATA_ONLY') == 'true' or (not budget.get('conservationMode', True) and not pending))
+          print('allowed=' + str(bool(allowed)).lower())
           PYCODE
-      - uses: actions/setup-node@v4
-        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
-        with:
-          node-version: '24'
-          cache: npm
-      - name: Install pinned browser dependencies for publication
-        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
-        run: npm ci
-      - name: Prepare website-only Pages artifact
-        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+      - name: Enrich metadata after protecting new-release work
+        id: enrichment
+        if: steps.checker.outcome == 'success' && steps.metadata.outputs.allowed == 'true'
+        continue-on-error: true
+        env:
+          TMDB_REFRESH_IDS: ${{ !inputs.metadata_only && !inputs.offline_only && inputs.metadata_ids || '' }}
+          TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
+          TMDB_RUN_REQUEST_LIMIT: ${{ vars.TMDB_RUN_REQUEST_LIMIT || '300' }}
+        run: python scripts/tmdb_enrich.py
+      - name: Check supported official listings automatically
+        id: discovery
+        if: always()
+        continue-on-error: true
+        run: python scripts/official_discovery.py --catalog data/catalog.json --cache-dir .state/official-discovery --output data/official-discovered.json --report reports/official-discovery.json --max-requests 12 --max-seconds 120
+      - name: Apply verified official gaps without movie API calls
+        id: overlay
+        if: always()
+        continue-on-error: true
+        run: python scripts/official_registry.py
+      - name: Read collector heartbeat
+        if: always()
+        continue-on-error: true
         run: |
-          python scripts/build_site.py
+          mkdir -p reports
+          gh run list --repo "$ALERT_REPO" --workflow catalog-pilot.yml --branch main --limit 20 --json databaseId,status,conclusion,createdAt,updatedAt,url > reports/catalog-workflow-runs.json
+      - name: Evaluate actual freshness and gaps
+        id: health
+        if: always()
+        env:
+          COLLECTOR_OUTCOME: ${{ steps.checker.outcome }}
+          RECOVERY_OUTCOME: ${{ steps.recovery.outcome }}
+          DISCOVERY_OUTCOME: ${{ steps.discovery.outcome }}
+          OVERLAY_OUTCOME: ${{ steps.overlay.outcome }}
+          ENRICHMENT_OUTCOME: ${{ steps.enrichment.outcome }}
+          SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$SNAPSHOT_OUTCOME" != 'success' ]]; then args+=(--input-error public_snapshot_unavailable); fi
+          if [[ "$COLLECTOR_OUTCOME" == 'failure' ]]; then args+=(--input-error collector_step_failed); fi
+          if [[ "$RECOVERY_OUTCOME" == 'failure' ]]; then args+=(--input-error cached_export_failed); fi
+          if [[ "$DISCOVERY_OUTCOME" == 'failure' ]]; then args+=(--input-error official_discovery_failed); fi
+          if [[ "$OVERLAY_OUTCOME" != 'success' ]]; then args+=(--input-error official_overlay_failed); fi
+          if [[ "$ENRICHMENT_OUTCOME" == 'failure' ]]; then args+=(--input-error metadata_enrichment_failed); fi
+          python scripts/catalogue_health.py --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --required-source sony-movies --required-source sony-series "${args[@]}"
+      - name: Build catalogue and public status
+        id: build
+        if: steps.snapshot.outcome == 'success' && (steps.checker.outcome == 'success' || steps.recovery.outcome == 'success') && steps.overlay.outcome == 'success' && steps.health.outcome == 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        run: python scripts/build_site.py
       - name: Configure Pages
-        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        if: steps.build.outcome == 'success'
         uses: actions/configure-pages@v5
       - name: Upload Pages website
-        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        if: steps.build.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
-        with:
-          path: .site
-      - name: Deploy Pages website
+        with: {path: .site}
+      - name: Deploy catalogue and status
         id: deployment
-        if: success() && steps.publication.outputs.ready == 'true' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        if: steps.build.outcome == 'success'
         uses: actions/deploy-pages@v4
+      - name: Keep failed publication from closing an incident
+        id: publication_guard
+        if: always() && steps.health.outcome == 'success' && steps.deployment.outcome != 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        run: python scripts/catalogue_health.py --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --required-source sony-movies --required-source sony-series --input-error website_publication_failed
+      - name: Open or update the freshness incident
+        if: always() && steps.health.outcome == 'success' && (steps.deployment.outcome == 'success' || steps.publication_guard.outcome == 'success') && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        run: python scripts/notify_catalogue_health.py --repo "$ALERT_REPO" --mention "$ALERT_OWNER" --workflow-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Validate the ledger before replacing its cache
+        id: ledger
+        if: always()
+        run: |
+          python - <<'PYCODE' >> "$GITHUB_OUTPUT"
+          import sqlite3
+          from pathlib import Path
+          path = Path('.state/catalog.sqlite')
+          valid = False
+          if path.is_file():
+              try:
+                  with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True) as db:
+                      valid = (db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
+                               and db.execute("SELECT 1 FROM meta WHERE key='pilot_started'").fetchone() is not None)
+                      db.execute('SELECT count(*) FROM requests').fetchone()
+              except sqlite3.Error:
+                  valid = False
+          print('valid=' + str(valid).lower())
+          PYCODE
+      - name: Preserve ledger, pagination, sources and alerts
+        if: always() && steps.ledger.outputs.valid == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: ottscout-pilot-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Write truthful run summary
+        if: always()
+        run: python scripts/pilot_summary.py
+      - name: Keep secret-free monitoring evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pilot-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/pilot.json
+            reports/catalogue-health.json
+            reports/official-discovery.json
+          if-no-files-found: warn
+          retention-days: 35
+      - name: Fail visibly when freshness is critical
+        if: always() && steps.health.outcome == 'success'
+        run: |
+          python - <<'PYCODE'
+          import json
+          report = json.load(open('reports/catalogue-health.json'))
+          # A past workflow failure remains visible until the independent
+          # post-completion monitor checks this run. Do not make that single
+          # historical signal force every otherwise recovered run to fail too.
+          current_critical = [cause for cause in report['causes']
+                              if cause['severity'] == 'critical' and cause['code'] != 'collector_workflow_failed']
+          if current_critical:
+              raise SystemExit('Release updates need attention; see the GitHub incident and /data-status/.')
+          PYCODE

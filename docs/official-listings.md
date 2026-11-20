@@ -1,6 +1,6 @@
 # Official OTT listing fallback
 
-`data/official-listings.json` is a small, reviewed registry for gaps in the streaming API. The overlay reads local JSON only. It introduces no paid API, subscription, scraper, automatic social-post ingestion or extra streaming request. Website-only publication applies it to the existing snapshot without calling the streaming provider or TMDB. Normal scheduled collection retains its existing request limits.
+`data/official-listings.json` holds reviewed entries for gaps in the streaming API. `official_discovery.py` can also produce bounded, verified SonyLIV records in `data/official-discovered.json`; `official_registry.py` merges them before the local overlay applies. Neither route introduces a paid availability API or extra Streaming Availability/TMDB request. Website-only publication uses existing evidence without re-running discovery or renewing its review times. No general scraper or social-post ingestion is enabled.
 
 ## Evidence and publication
 
@@ -20,6 +20,16 @@ To add or reverify an entry:
 Invalid or conflicting records fail closed. Expired or unconfirmed records add no availability offer. Expiry is enforced on every catalogue export and website build, including rebuilding a previously published snapshot. The web dashboard also hides expired official offers. Existing offline phone/TV/widget caches need to refresh to receive removals; evidence expiry is deliberately not exported as a streaming departure (`expiresOn`).
 
 A newer explicit show/platform removal recorded by the provider suppresses older official evidence until it is reviewed again. A missing API offer alone is not treated as a removal: that distinction is what lets the fallback fill genuine coverage gaps.
+
+## Supported automatic discovery
+
+The reviewed source list contains SonyLIV movie/series indexes and a Netflix Tudum lead. The workflow allows at most **12 public requests and 120 seconds** for discovery, with robots checks, cached HTTP responses, response/byte/time bounds, candidate rotation and bounded verification per source. These public requests are separate from the streaming-provider ledger. The adapter inspects only supported exact-title evidence; it does not claim every platform release is covered.
+
+Sony verification requires an exact full movie or series ID and type, explicit India region/contract availability, a recent digital-release date and subscription entitlement. Movie bundles must resolve to a unique full base asset with matching identity and release-announcement evidence. Series require exact parent/first-full-episode evidence. Explicit `comingSoon` conflicts, mismatched dates, ambiguous playable identity, unknown access or unknown region leave candidates unverified and add no fallback offer. Trailer language is not copied as playable audio; only explicit matching track evidence is used. Public metadata still does not constitute an authenticated India playback test.
+
+A confirmed record receives its actual successful review time and expiry no more than 30 days later. Reverification can renew it only after the same strict checks pass again. Robots blocks, network failures, partial scans, generic HTTP 200 responses or contradictory flags cannot extend evidence. Cached valid records may survive a failed scan only until their existing expiry; they are never silently relabelled as freshly verified.
+
+Netflix automatic discovery remains disabled when robots policy blocks the bot; the implementation also requires an enabled, verified region-aware parser before importing Netflix candidates. Reviewed Netflix entries can still be maintained through exact first-party evidence. Prime Video, JioHotstar, ZEE5, Sun NXT and aha have no automatic adapter here; existing manually reviewed registry support is distinct from automatic coverage. The source report records required Sony checks, optional blocked Netflix, unverified candidates and reasons. Independent monitoring reuses those observations without changing their dates.
 
 ## Identity and source integrity
 

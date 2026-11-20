@@ -1,23 +1,37 @@
 # Catalogue reliability
 
-No new provider subscription or availability API is introduced. Existing Streaming Availability request limits and the scheduled cadence remain unchanged. TMDB watch-provider fallback is deferred pending commercial licensing; TMDB metadata enrichment remains as previously configured.
+New releases take priority over maintenance and older imports. The collector keeps local hard limits of **400 Streaming Availability attempts per UTC month and 12 per run**, counts attempts before I/O, and retains failures in its ledger. These guards do not establish the provider account's terms, guarantee free capacity or count other consumers of the same API key. No additional availability-provider subscription is introduced. TMDB watch-provider fallback remains deferred pending licensing.
 
-Reported gaps can also be filled from the reviewed [official-listing registry](official-listings.md). This local overlay requires exact platform identities and dated first-party evidence, expires stale entries, preserves watchlist aliases, and uses no API requests. Official release dates and audio evidence remain distinct from provider detection and metadata.
+## Publish valid new data without waiting for a whole query
 
-## Incomplete metadata
+Each complete, validated NEW page commits title snapshots, independent platform events and its next cursor together. An incomplete multi-page query can therefore publish releases already fetched without falsely advancing its completion watermark. A malformed later page leaves earlier valid pages intact and cannot advance its own cursor. Older staged maintenance snapshots cannot overwrite newer title bodies.
 
-A valid India offer can be published with an empty audio list. The app displays “Audio languages unverified” under All languages. A specific language, original-audio or description-track filter requires explicit matching evidence. Known non-target-only languages and titles with no current offers remain excluded. Static weekly pages include unknown-audio offers; static language pages do not treat them as language matches.
+Already-downloaded NEW pages from the previous staging policy recover idempotently before network work, including `--export-cached` with no API key or remaining requests. Original query bounds, check times and cursors remain intact. UPDATE/REMOVED windows still apply atomically only after their final page. Completing an old NEW window starts the current due window in the same run when capacity remains.
 
-Each exported offer carries availability source/check time and audio source/check time/status. Original language and audio description remain separate fields. Dated official audio evidence applies only to an exact provider ID with missing audio and expires after 30 days. It does not create an availability offer or overwrite reported audio.
+Per-feed completion is separate from publication. The global complete-update date remains the oldest complete feed; page commits, official fallback, TMDB enrichment and cached publication never make that timestamp current. Empty provider pages do not imply a wholesale deletion. Explicit exact-title/platform removal events remain authoritative.
 
-## Recovery and retention
+## Spend the remaining allowance on freshness first
 
-Reported titles in data/title-rechecks.json get at most one bounded lookup per run and at most one lookup per UTC day across all unresolved reports. Legacy Netflix movie reports and exact JioHotstar movie/series reports are supported. Resolved reports stop consuming lookups. During quota conservation, a reported-title lookup shares the same two-request daily allowance as new-feed pages, and unresolved reports wait seven days between attempts. Provider network failures retain existing records and are cooled down; budget limits still stop requests. Reports must identify an exact title ID using its canonical official platform URL. Provider results must match that platform, title ID and content type; a similar title string is insufficient. Audio and weekly dates come from the provider result, not from an inferred premiere date or dubbed-language list.
+The nominal target is four checks per day in six-hour UTC slots. Conservation protects the highest affordable plan of four/day, two/day (12-hour slots), one/day or sparse capacity. Higher plans allow bounded catch-up of up to six total new-release attempts per UTC day only above their future floor. The normal future emergency reserve is two requests; sparse capacity keeps one, and the final UTC day releases that reserve. Failed calls use the same durable allowance. Capacity pays for pages rather than guaranteed complete catalogue checks.
 
-Network or malformed-response sync failures cannot replace the public snapshot. The deployed website retains its previous validated data; successful cached publication under a request cap preserves the original streaming and title check timestamps. Empty change pages do not imply wholesale catalogue deletion. Explicit removal data is still respected. Cached data is not silently relabelled as fresh.
+During conservation or active NEW pagination, maintenance, historical imports and optional reported-title provider lookups wait without resetting progress. The original bulk-import freshness reserve still limits older imports. The report exposes affordable capacity and `capacityInsufficient` rather than claiming a degraded plan meets the nominal target. A new calendar month changes accounting without deleting history. See the exact [budget and cadence policy](catalog-pilot.md#adaptive-monthly-budget).
 
-## Operator diagnostics
+## Two bounded fallback paths
 
-The private pilot report and GitHub Actions summary show unknown audio counts, titles without current offers, titles not checked for seven days, request usage, and reported-title recheck outcomes. These diagnostics do not restore technical banners to the end-user interface. Review older records and unresolved reports before promising complete coverage.
+Reviewed exact-ID entries and automatic SonyLIV checks are merged through the [official-listing policy](official-listings.md). The automatic adapter checks India region, exact movie/series identity, digital-release evidence, full content and subscription entitlement under bounded public-request/time limits. Coming-soon/date/access conflicts fail closed. Unknown audio stays empty. Netflix automatic discovery respects its robots block; reviewed Netflix records remain available until their evidence expires. Neither path fabricates playback verification or complete platform coverage.
 
-Tests cover unknown-language inclusion/exclusion, offer evidence, stale check timestamps, official evidence expiry/identity, recheck failure cooldown, and preservation of an existing public snapshot after provider failure. No automatic claim is made that a second provider has verified a listing.
+Optional `data/title-rechecks.json` provider lookups support legacy Netflix movies and exact JioHotstar movies/series. When normal capacity is available, unresolved reports get at most one lookup per UTC day across all reports; resolved reports stop repeating. Results must match the exact platform ID and content type. Name similarity is insufficient. Audio and weekly dates come from provider evidence. Conservation or a pending NEW query defers these paid-endpoint lookups entirely.
+
+## Incomplete metadata and retained evidence
+
+A valid India offer with unknown audio may appear under All languages. Specific-language, original-audio and description-track filters require explicit matching evidence. Known non-target-only audio and titles without usable offers remain excluded. Original language never establishes dubbing, and a promo's language never establishes every audio track.
+
+Offer availability, audio and original language retain separate source/check fields. Official evidence lasts at most 30 days and is not renewed by a failed or generic-page check. Provider-only audio supplements do not create an offer or overwrite reported audio. Official fallback availability has its own dated proof and is not exported as a streaming departure. Local app/widget caches must refresh to receive updated evidence and removals.
+
+## Independent monitoring and recovery
+
+The collector's report and summary distinguish downloaded, published and staged pages, current capacity, per-feed completion and unchanged maintenance watermarks. A separate six-hour watchdog and post-collector check reuse the published catalogue, original source timestamps and actual GitHub execution heartbeat with **zero Streaming Availability or TMDB requests**. Missing source observations, lag, stalled pagination, known publication gaps and failed publication cannot look healthy.
+
+The [public status page](https://ottscout.techiwithhelmet.com/data-status/) and one bot-owned GitHub incident show operational causes. Incidents are deduplicated, ordinary changed-signal updates are throttled, a first critical escalation may notify the owner, and closure requires validated recovery. A previous workflow failure remains visible until a completed successor is independently observed; it does not force an otherwise recovered collector into an endless failure loop. Collector, watchdog and publisher serialize publication and incident actions.
+
+A later provider failure may be followed by a separate offline export of earlier valid page commits. The failure remains in health evidence; cached data is not relabelled as a complete update. Private Actions caches remain best-effort storage. Lost ledger state requires operator review, never an automatic quota reset. Monitoring and tests establish bounded behavior, not exhaustive catalogue accuracy or authenticated India playback.

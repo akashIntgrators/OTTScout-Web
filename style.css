@@ -230,6 +230,12 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .seo-nav a { display:inline-flex; align-items:center; min-height:36px; }
 .seo-navigation { max-width:1000px; margin:20px auto; padding:0 24px; }
 .seo-description,.seo-note { color:var(--muted); }
+.status-summary { margin:2rem 0; }
+.status-summary h2 { max-width:24ch; }
+.status-facts { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem 2rem; margin:2rem 0; }
+.status-facts dt { color:var(--muted); }
+.status-facts dd { margin:0; overflow-wrap:anywhere; }
+@media(max-width:560px) { .status-facts { grid-template-columns:minmax(0,1fr); gap:.4rem; } .status-facts dd { margin-bottom:1rem; } }
 .seo-note { font-size:0.875rem; }
 .guide-page { max-width:760px; }
 .guide-index { list-style:none; padding:0; }

@@ -1,0 +1,110 @@
+name: Monitor OTTScout release freshness
+on:
+  schedule:
+    - cron: '10 2,8,14,20 * * *'
+  workflow_dispatch:
+  workflow_run:
+    workflows: ['OTTScout catalog pilot']
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pages: write
+  id-token: write
+concurrency:
+  # Same group as the collector: publication and issue reconciliation are serial.
+  group: ottscout-catalog-pilot
+  cancel-in-progress: false
+jobs:
+  monitor:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ALERT_REPO: ${{ github.repository }}
+      ALERT_OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/cache/restore@v4
+        with:
+          path: .health-monitor
+          key: ottscout-health-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ottscout-health-v1-
+      - name: Read published catalogue and original evidence times
+        id: snapshot
+        continue-on-error: true
+        run: python scripts/fetch_public_catalogue.py
+      - name: Read collector heartbeat independently
+        id: heartbeat
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          gh run list --repo "$ALERT_REPO" --workflow catalog-pilot.yml --branch main --limit 20 --json databaseId,status,conclusion,createdAt,updatedAt,url > reports/catalog-workflow-runs.json
+      - name: Evaluate missed runs, delayed pages and unavailable sources
+        id: health
+        if: always()
+        env:
+          SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
+          HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$SNAPSHOT_OUTCOME" != 'success' ]]; then args+=(--input-error public_snapshot_unavailable); fi
+          if [[ "$HEARTBEAT_OUTCOME" != 'success' ]]; then args+=(--input-error heartbeat_unavailable); fi
+          python scripts/catalogue_health.py --report reports/no-private-pilot.json --discovery-report reports/no-new-source-check.json --catalog data/catalog.json --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --state .health-monitor/progress.json --required-source sony-movies --required-source sony-series "${args[@]}"
+      - uses: actions/setup-node@v4
+        if: steps.snapshot.outcome == 'success' && steps.health.outcome == 'success'
+        with: {node-version: '24', cache: npm}
+      - name: Install pinned website dependencies
+        if: steps.snapshot.outcome == 'success' && steps.health.outcome == 'success'
+        run: npm ci
+      - name: Refresh only the website and status from public data
+        id: build
+        if: steps.snapshot.outcome == 'success' && steps.health.outcome == 'success'
+        run: python scripts/build_site.py
+      - name: Configure Pages
+        if: steps.build.outcome == 'success'
+        uses: actions/configure-pages@v5
+      - name: Upload monitored website
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
+        with: {path: .site}
+      - name: Publish status without movie API requests
+        id: deployment
+        if: steps.build.outcome == 'success'
+        uses: actions/deploy-pages@v4
+      - name: Preserve an incident if status publication failed
+        id: publication_guard
+        if: always() && steps.health.outcome == 'success' && steps.deployment.outcome != 'success'
+        run: python scripts/catalogue_health.py --report reports/no-private-pilot.json --discovery-report reports/no-new-source-check.json --catalog data/catalog.json --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --state .health-monitor/progress.json --required-source sony-movies --required-source sony-series --input-error website_publication_failed
+      - name: Maintain the same GitHub incident
+        if: always() && steps.health.outcome == 'success' && (steps.deployment.outcome == 'success' || steps.publication_guard.outcome == 'success')
+        run: python scripts/notify_catalogue_health.py --repo "$ALERT_REPO" --mention "$ALERT_OWNER" --state .health-monitor/alert.json --workflow-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .health-monitor
+          key: ottscout-health-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: catalogue-monitor-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/catalogue-health.json
+          if-no-files-found: warn
+          retention-days: 35
+      - name: Make critical lag visible in workflow notifications
+        if: always() && steps.health.outcome == 'success'
+        run: |
+          python - <<'PYCODE'
+          import json
+          report = json.load(open('reports/catalogue-health.json'))
+          if report['status'] == 'critical':
+              raise SystemExit('Catalogue freshness is critical; the GitHub incident and public status show the cause.')
+          PYCODE

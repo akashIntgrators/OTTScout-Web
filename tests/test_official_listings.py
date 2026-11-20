@@ -337,7 +337,7 @@ class OfficialListingTests(unittest.TestCase):
         fallback_only,_=official.apply_official_listings(catalog(),[row],NOW)
         self.assertEqual(official.apply_official_listings(fallback_only,[row],row['expiresAt'])[0]['titles'],[])
 
-    def test_sonyliv_release_episode_must_belong_to_same_show_and_access_is_exact_india_faq(self):
+    def test_sonyliv_release_episode_and_subscription_access_sources_are_exact(self):
         row=sony_record()
         episode=row['sourceURL']+'/the-bride-s-secret-1090554840?watch=true'
         row['releaseEvidenceURL']=episode;row['audioEvidenceURL']=episode
@@ -352,7 +352,11 @@ class OfficialListingTests(unittest.TestCase):
             broken=copy.deepcopy(row);broken[key]=value
             with self.subTest(key=key,value=value),self.assertRaises(official.OfficialListingError):
                 official.apply_official_listings(catalog(),[broken],NOW)
-        for value in [row['sourceURL'],'https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html?other=1',
+        exact=copy.deepcopy(row);exact['access']['evidenceURL']=row['sourceURL']
+        self.assertEqual(official.apply_official_listings(catalog(),[exact],NOW)[1]['fallback'],1)
+        for value in [row['sourceURL'].replace('1790007924','1790007999'),
+                      row['sourceURL'].replace('www.sonyliv.com','www.sonyliv.com.example.test'),
+                      'https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html?other=1',
                       'https://origin-staticv2.sonyliv.com.example.test/UI_icons/india_faqs.html']:
             broken=copy.deepcopy(row);broken['access']['evidenceURL']=value
             with self.assertRaises(official.OfficialListingError):official.apply_official_listings(catalog(),[broken],NOW)

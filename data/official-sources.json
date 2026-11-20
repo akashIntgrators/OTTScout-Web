@@ -1,0 +1,5 @@
+[
+  {"id":"sony-movies","platform":"SonyLIV","adapter":"sony","kind":"Movie","url":"https://www.sonyliv.com/custompage/movies-399"},
+  {"id":"sony-series","platform":"SonyLIV","adapter":"sony","kind":"Series","url":"https://www.sonyliv.com/custompage/tv-shows-32990"},
+  {"id":"netflix-tudum","platform":"Netflix","adapter":"netflix-tudum","url":"https://www.netflix.com/tudum/articles/new-on-netflix"}
+]

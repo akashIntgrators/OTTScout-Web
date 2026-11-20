@@ -33,9 +33,7 @@ jobs:
       - name: Reuse the last published catalogue without API imports
         shell: bash
         run: |
-          mkdir -p data
-          curl --fail --show-error --silent --location --retry 3 --retry-max-time 60 --connect-timeout 15 --max-time 60 \
-            --output data/catalog.json https://ottscout.techiwithhelmet.com/data/catalog.json
+          python scripts/fetch_public_catalogue.py
           python - <<'PYCODE'
           import hashlib, json, os
           from pathlib import Path
@@ -63,6 +61,7 @@ jobs:
           import hashlib, json, os, shutil, time
           from pathlib import Path
           from scripts.official_listings import apply_official_listings
+          from scripts.official_registry import load_records
           source = Path('data/catalog.json')
           target = Path('.site/data/catalog.json')
           expected = Path(os.environ['RUNNER_TEMP'], 'ottscout-published-catalogue.sha256').read_text()
@@ -70,12 +69,12 @@ jobs:
               raise SystemExit('Source catalogue changed during website checks')
           catalog = json.loads(source.read_text())
           registry = Path('data/official-listings.json')
-          if registry.exists() or catalog.get('officialListingOverlay') or catalog.get('officialListingAliases'):
+          if registry.exists() or Path('data/official-discovered.json').exists() or catalog.get('officialListingOverlay') or catalog.get('officialListingAliases'):
               staged = json.loads(target.read_text())
               evaluated = staged.get('officialListingOverlay', {}).get('evaluatedAt')
               if type(evaluated) is not int or abs(time.time() - evaluated) > 600:
                   raise SystemExit('Missing or stale official-listing build evaluation')
-              records = json.loads(registry.read_text()) if registry.exists() else []
+              records = load_records(Path('.'), catalog, now=evaluated)
               result, summary = apply_official_listings(catalog, records, evaluated)
               # Recompute the one allowed transformation from the unchanged
               # downloaded snapshot. Neither API imports nor unrelated edits

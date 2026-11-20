@@ -14,10 +14,14 @@ try:
     from scripts.site_features import apply_reports, valid_reports, netflix_id, schema_graph, json_script, language_label
     from scripts.editorial_guides import EDITORIAL_GUIDES
     from scripts.official_listings import apply_official_listings
+    from scripts.official_registry import load_records
+    from scripts.status_page import render_status
 except ModuleNotFoundError:
     from site_features import apply_reports, valid_reports, netflix_id, schema_graph, json_script, language_label
     from editorial_guides import EDITORIAL_GUIDES
     from official_listings import apply_official_listings
+    from official_registry import load_records
+    from status_page import render_status
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 'https://ottscout.techiwithhelmet.com'
@@ -202,6 +206,10 @@ def build(root=ROOT, now=None):
     if recommendation_module.exists():
         (target / 'web').mkdir(exist_ok=True)
         shutil.copy2(recommendation_module, target / 'web/recommendation-links.js')
+    status_script = root / 'web/catalogue-status.js'
+    if status_script.exists():
+        (target / 'web').mkdir(exist_ok=True)
+        shutil.copy2(status_script, target / 'web/catalogue-status.js')
     if (root / 'app-ads.txt').exists():
         shutil.copy2(root / 'app-ads.txt', target / 'app-ads.txt')
     if (root / 'web/account.js').exists():
@@ -233,6 +241,7 @@ def build(root=ROOT, now=None):
     urls = ['/']
     navigation = '<a href="/">Dashboard</a><a href="/this-week/">This week</a>' + ''.join(f'<a href="/languages/{lang.lower()}/">{lang}</a>' for lang in LANGUAGES)
     navigation += '<a href="/guides/">Guides</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a>'
+    navigation += '<a href="/data-status/">Data status</a>'
     guide_navigation = '<a href="/">Dashboard</a><a href="/this-week/">This week</a><a href="/guides/">Guides</a><a href="/audio-description/">Audio description</a>'
     def page(path, title, description, content, work=None, indexable=True):
         canonical = BASE + path
@@ -289,8 +298,8 @@ def build(root=ROOT, now=None):
     if source.exists():
         catalog = json.loads(source.read_text())
         official_registry = root / 'data/official-listings.json'
-        if official_registry.exists() or catalog.get('officialListingOverlay') or catalog.get('officialListingAliases'):
-            records = json.loads(official_registry.read_text()) if official_registry.exists() else []
+        if official_registry.exists() or (root / 'data/official-discovered.json').exists() or catalog.get('officialListingOverlay') or catalog.get('officialListingAliases'):
+            records = load_records(root, catalog, now=now)
             catalog, _ = apply_official_listings(catalog, records, now)
         catalog = apply_reports(catalog,reports)
         source.write_text(json.dumps(catalog,ensure_ascii=False),encoding='utf-8')
@@ -413,6 +422,7 @@ def build(root=ROOT, now=None):
     guide = '<nav class="seo-nav" aria-label="Audio-description guide sections"><a href="#description-reports">Reported titles</a><a href="#enable-description">Player instructions</a><a href="#description-feedback">Suggest a correction</a></nav><h2>What an audio-description track does</h2><p>Audio description narrates visual action, expressions and scene changes between dialogue. A regular language track, dubbed version or subtitle listing does not prove that narration is available. OTTScout links to streaming services; it does not play, download or create description tracks.</p><h2>How to read these reports</h2><p>These candidates come from explicit audio-description listings on official public provider pages, accessed through India URLs. Providers can regionalize those pages by visitor location. We have not checked playback with an India account, and subscription, device, profile, season and episode differences can matter. Treat the list as a starting point and confirm the exact description track in your player.</p><p>Reports are dated. The dashboard filter excludes reports older than 30 days; re-check older directory entries directly with the provider. Missing reports mean Unverified, not unavailable. We currently have source reports for English, Hindi, Tamil and Telugu; Kannada and Malayalam description tracks remain unverified in this directory.</p><p><a href="/?audio-description=reported">Show reported description tracks in the imported catalogue</a>. Your current platform and language filters still apply. The Watch in filter matches description languages when the description filter is enabled.</p><h2 id="description-reports">Provider-reported candidates</h2>' + (''.join(report_cards) if report_cards else '<p>No current source reports are promoted. Use the provider instructions below to check a title directly.</p>')
     guide += '<h2 id="enable-description">Check the track before watching</h2><h3>Netflix</h3><p>Start the title, open Audio &amp; Subtitles, and choose a track explicitly marked Audio Description in the language you want. Netflix also supports searches such as Audio Description in English. <a href="https://help.netflix.com/en/node/25079">Netflix’s description-track instructions</a> explain device and episode differences.</p><h3>Prime Video</h3><p>During playback, open Audio &amp; Languages and look for a track labelled Audio Description. Device support and title features can vary. <a href="https://www.primevideo.com/help/?nodeId=GYWG45TK599P4KUL">Read Prime Video’s instructions</a>. We have not verified title-specific India description tracks for Prime Video in this directory.</p><h3>Other covered platforms</h3><p>JioHotstar, ZEE5 and SonyLIV description-track availability is currently unverified here. Do not interpret a platform’s ordinary audio-language list as confirmation of description.</p><h2 id="description-feedback">Help improve the directory</h2><p>Use Report incorrect details → Audio description on a title, or <a href="/contact/">contact us on GitHub</a>. Include the platform, title link, description language, India region, device and check date where possible. Do not share account, payment or login details. Reports are reviewed before they become directory entries.</p><p><a href="/accessibility/">Website keyboard and screen-reader help</a></p>'
     page('/audio-description/','Audio-described movies and series: reports for viewers in India','Find provider-reported audio-description languages and source dates. India playback remains unverified; confirm the exact track on the streaming service.',guide)
+    page('/data-status/', 'Release update status', 'Check when OTTScout last collected new releases and see any known delays.', render_status(root), indexable=False)
     sitemap = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + ''.join(f'<url><loc>{escape(BASE+p)}</loc></url>' for p in urls) + '</urlset>'
     (target / 'sitemap.xml').write_text(sitemap)
     (target / 'robots.txt').write_text(f'User-agent: *\nAllow: /\nSitemap: {BASE}/sitemap.xml\n')
