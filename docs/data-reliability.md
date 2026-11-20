@@ -28,6 +28,8 @@ A valid India offer with unknown audio may appear under All languages. Specific-
 
 Offer availability, audio and original language retain separate source/check fields. Official evidence lasts at most 30 days and is not renewed by a failed or generic-page check. Provider-only audio supplements do not create an offer or overwrite reported audio. Official fallback availability has its own dated proof and is not exported as a streaming departure. Local app/widget caches must refresh to receive updated evidence and removals.
 
+Skipping TMDB network work preserves validated cached metadata. After a streaming export, skipped/failed enrichment is followed by `--cached-only`: matching cached originals, genres and TMDB identity are reapplied without movie API calls or ID repairs. Existing check timestamps stay unchanged even when an online refresh is due; missing or changed-identity matches remain pending. Publication requires successful online enrichment or cached application. Offline mode therefore saves quota without silently dropping already-known languages and genres.
+
 ## Independent monitoring and recovery
 
 The collector's report and summary distinguish downloaded, published and staged pages, current capacity, per-feed completion and unchanged maintenance watermarks. A separate six-hour watchdog and post-collector check reuse the published catalogue, original source timestamps and actual GitHub execution heartbeat with **zero Streaming Availability or TMDB requests**. Missing source observations, lag, stalled pagination, known publication gaps and failed publication cannot look healthy.

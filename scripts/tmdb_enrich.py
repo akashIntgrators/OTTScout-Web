@@ -221,22 +221,29 @@ def repair_external_ids(catalog, requested, now):
         db.close()
     return repaired
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--catalog', default='data/catalog.json')
     parser.add_argument('--cache', default='.state/tmdb.sqlite')
-    args = parser.parse_args()
+    parser.add_argument('--cached-only', action='store_true',
+                        help='Apply matching cached metadata without API requests or external-ID repair')
+    args = parser.parse_args(argv)
     source = Path(args.catalog)
     catalog = json.loads(source.read_text())
     now = int(time.time())
-    requested = os.environ.get('TMDB_REFRESH_IDS','')
+    # A recovery/conservation export must retain existing metadata even when
+    # network enrichment is disabled. Explicitly ignore both repair requests
+    # and credentials so inherited workflow variables cannot escape this mode.
+    requested = '' if args.cached_only else os.environ.get('TMDB_REFRESH_IDS','')
     if requested:
         repair_external_ids(catalog, requested, now)
-    token = os.environ.get('TMDB_READ_ACCESS_TOKEN')
+    token = None if args.cached_only else os.environ.get('TMDB_READ_ACCESS_TOKEN')
     client = Client(token, int(os.environ.get('TMDB_RUN_REQUEST_LIMIT','300'))) if token else None
     db = open_cache(args.cache)
     try:
         summary = enrich(catalog,db,client,now,tuple(value.strip() for value in requested.split(',')))
+        if args.cached_only:
+            summary.update(status='cached', message='Matching cached TMDB metadata applied; no requests made')
     finally:
         db.close()
     temp = source.with_suffix('.tmp')
