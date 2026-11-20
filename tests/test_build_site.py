@@ -4,12 +4,64 @@ from pathlib import Path
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 
 spec = importlib.util.spec_from_file_location('build_site', Path(__file__).resolve().parents[1] / 'scripts/build_site.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 class DiscoveryBuildTests(unittest.TestCase):
+    def test_long_title_lists_offer_skip_and_section_navigation(self):
+        class PageElements(HTMLParser):
+            def __init__(self, markup):
+                super().__init__()
+                self.elements = []
+                self.feed(markup)
+
+            def handle_starttag(self, tag, attrs):
+                self.elements.append((tag, dict(attrs)))
+
+        now = 1793275200
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in ('index.html', 'app.js', 'style.css', 'CNAME'):
+                (root / name).write_text('')
+            (root / 'data').mkdir()
+            titles = []
+            for number, name in enumerate(('2 Stories', 'Alpha', 'Éclair', 'తెలుగు', 'Excluded')):
+                titles.append({'id': f'motn:{number + 1}', 'title': name, 'type': 'Movie',
+                               'year': 2006 if number == 0 else 2026, 'weekly': True,
+                               'weeklyUpdatedAt': now - 10, 'weeklyPlatforms': ['Netflix'],
+                               'offers': [{'platform': 'Netflix', 'type': 'subscription',
+                                           'audio': ['English' if name == 'Excluded' else 'Hindi'],
+                                           'availableSince': now - 10}]})
+            (root / 'data/catalog.json').write_text(json.dumps({'titles': titles, 'updatedAt': '2026-10-29'}))
+            site = module.build(root, now)
+
+            language = PageElements((site / 'languages/hindi/index.html').read_text()).elements
+            weekly = PageElements((site / 'this-week/index.html').read_text()).elements
+            for elements in (language, weekly):
+                skip = next(i for i, (tag, attrs) in enumerate(elements) if tag == 'a' and attrs.get('href') == '#site-information')
+                first_title = next(i for i, (tag, attrs) in enumerate(elements) if tag == 'a' and attrs.get('href', '').startswith('/titles/'))
+                footer = next(i for i, (tag, attrs) in enumerate(elements) if tag == 'nav' and attrs.get('id') == 'site-information')
+                self.assertLess(skip, first_title)
+                self.assertGreater(footer, first_title)
+                self.assertEqual(elements[footer][1].get('tabindex'), '-1')
+
+            for section in ('numbers', 'a', 'e', 'other'):
+                self.assertIn(('a', {'href': f'#titles-{section}'}), language)
+                self.assertTrue(any(tag == 'h2' and attrs.get('id') == f'titles-{section}' and attrs.get('tabindex') == '-1' for tag, attrs in language))
+                self.assertFalse(any(tag == 'section' and attrs.get('aria-labelledby') == f'titles-{section}' for tag, attrs in language),
+                                 'Alphabet headings should not create dozens of region landmarks')
+            for number in range(1, 5):
+                self.assertEqual(sum(tag == 'a' and attrs.get('href') == f'/titles/{number}/' for tag, attrs in language), 1)
+            self.assertFalse(any(tag == 'a' and attrs.get('href') == '/titles/5/' for tag, attrs in language))
+            for section in ('older-movies', 'other-additions'):
+                self.assertIn(('a', {'href': f'#{section}'}), weekly)
+                self.assertTrue(any(tag == 'h2' and attrs.get('id') == section and attrs.get('tabindex') == '-1' for tag, attrs in weekly))
+            for number in range(1, 6):
+                self.assertEqual(sum(tag == 'a' and attrs.get('href') == f'/titles/{number}/' for tag, attrs in weekly), 1)
+
     def test_public_pages_links_language_and_expiry(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
