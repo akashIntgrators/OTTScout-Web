@@ -102,7 +102,30 @@ const context = vm.createContext({
 });
 vm.runInContext(source, context);
 const run = code => vm.runInContext(code, context);
-run('const renderResults=render;const updateSelectionsReal=updateSelections;');
+run('const renderResults=render;const updateSelectionsReal=updateSelections;const realAnnounceResults=announceResults;');
+// The real debouncer must preserve a user action when a background render
+// arrives before the delayed live-region update.
+let timerId=0;
+const timers=new Map();
+context.setTimeout=fn=>{const id=++timerId;timers.set(id,fn);return id;};
+context.clearTimeout=id=>timers.delete(id);
+run(`announceResults('Film hidden. Discover: 1 title matches.',true);announceResults('Discover: 1 title matches.');`);
+assert.equal(timers.size,1);
+timers.values().next().value();timers.clear();
+assert.equal(ids.get('#results-status').textContent,'Film hidden. Discover: 1 title matches.');
+run(`announceResults('Film hidden. Discover: 1 title matches.',true);announceResults('Discover: 2 titles match.');announceResults('Discover: 3 titles match.');`);
+assert.equal(timers.size,1,'Coalesced result updates should not cancel the action timer');
+timers.values().next().value();timers.clear();
+assert.equal(ids.get('#results-status').textContent,'Film hidden. Discover: 1 title matches. Updated results: Discover: 3 titles match.','The action and most recent result count must both be announced');
+run(`announceResults('Discover: 4 titles match.')`);
+timers.values().next().value();timers.clear();
+assert.equal(ids.get('#results-status').textContent,'Discover: 4 titles match.','Result announcements must resume after an action');
+ids.get('#results-status').textContent='Film hidden. Discover: 1 title matches.';
+run(`announceResults('Film hidden. Discover: 1 title matches.',true)`);
+assert.equal(ids.get('#results-status').textContent,'','Identical actions must trigger a fresh live-region change');
+timers.values().next().value();timers.clear();
+assert.equal(ids.get('#results-status').textContent,'Film hidden. Discover: 1 title matches.');
+context.setTimeout=()=>0;context.clearTimeout=()=>{};
 function escape() {
   return { key: 'Escape', defaultPrevented: false, stopped: false,
     preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
@@ -479,7 +502,11 @@ olderGroup.open=true;olderGroup.fire('toggle');
 assert.match(run('lastAnnouncement'),/43 titles shown in 2 open groups/);
 newestGroup.open=false;newestGroup.fire('toggle');
 assert.match(run('lastAnnouncement'),/12 titles shown in 1 open group/);
+const detachedWeeklyGroup=newestGroup;
 run('render()');assert.equal(catalog.children[0].open,false);assert.equal(catalog.children[1].open,true);
+const announcementAfterRerender=run('lastAnnouncement');
+detachedWeeklyGroup.open=true;detachedWeeklyGroup.fire('toggle');
+assert.equal(run('lastAnnouncement'),announcementAfterRerender,'A late toggle from a removed group must not replace the current announcement');
 assert.equal(catalog.children[0].querySelectorAll('.card').length,31,'Re-rendering lost per-day paging');
 assert.equal(run('visibleCards().every(card=>card.dataset.titleId.startsWith("old-"))'),true,'Focus candidates include a collapsed day');
 run(`$('#search').value='no matches';render();$('#search').value='';setView('discover');setView('weekly');`);
@@ -574,9 +601,9 @@ assert.equal(run('dismissed.size'),0);
 assert.deepEqual(JSON.parse(stored.get('ottscout-dismissed')),[],'Restored state must persist');
 assert.equal(run('view'),'discover');assert.equal(run('selectedPlatforms.size'),0,'Restoring must retain filters');
 assert.equal(catalog.querySelectorAll('.card').length,0,'Restoring must not bypass filters');
-assert.equal(run('lastAnnouncement'),'2 hidden titles restored. Current filters and view still apply.');
+assert.match(run('lastAnnouncement'),/^2 hidden titles restored\. Current filters and view still apply\. Discover: 0 titles match\./);
 run(`dismissed.add('context-prime');render()`);restoreButton.focus();run('restoreHiddenTitles()');
-assert.equal(run('lastAnnouncement'),'1 hidden title restored. Current filters and view still apply.');
+assert.match(run('lastAnnouncement'),/^1 hidden title restored\. Current filters and view still apply\. Discover: 0 titles match\./);
 assert.equal(document.activeElement,heading);
 run('availablePlatforms().forEach(name=>selectedPlatforms.add(name));render()');
 run('Date.now=nativeNow');
@@ -636,6 +663,11 @@ selectedOriginals=null;selectedGenres=null;originalOnly=false;subscriptionOnly=f
 $('#search').value='';selectedSearchId=null;render();
 `);
 const cardById=id=>catalog.querySelectorAll('.card').find(card=>card.dataset.titleId===id);
+const hideForAnnouncement=cardById('motn:101').querySelector('.dismiss-title');
+hideForAnnouncement.onclick();
+assert.match(run('lastAnnouncement'),/^A rental film hidden\. Discover: 1 title matches\./,'Hiding must announce the action and updated result count');
+run('restoreHiddenTitles()');
+assert.match(run('lastAnnouncement'),/^1 hidden title restored\..*Discover: 2 titles match\./,'Restoring must announce the action and updated result count');
 const firstSave=cardById('motn:101').querySelector('.save');
 const secondSave=cardById('motn:102').querySelector('.save');
 assert.equal(firstSave.attributes['aria-label'],'Save to watchlist: A rental film');
@@ -652,13 +684,42 @@ const watchlistSave=cardById('motn:101').querySelector('.save');
 assert.equal(watchlistSave.attributes['aria-label'],'Save to watchlist: A rental film');
 assert.equal(watchlistSave.attributes['aria-pressed'],'true');
 watchlistSave.focus();watchlistSave.onclick();
-assert.equal(run('lastAnnouncement'),'A rental film removed from your watchlist. 1 saved title.');
+assert.match(run('lastAnnouncement'),/^A rental film removed from your watchlist\. 1 saved title\. Watchlist: 1 title matches\./);
 assert.equal(document.activeElement,cardById('motn:102').querySelector('.card-title').querySelector('a'),'Removing a saved title must focus the next card');
 const lastSave=cardById('motn:102').querySelector('.save');lastSave.focus();lastSave.onclick();
-assert.equal(run('lastAnnouncement'),'Another film removed from your watchlist. 0 saved titles.');
+assert.match(run('lastAnnouncement'),/^Another film removed from your watchlist\. 0 saved titles\. Watchlist: 0 titles match\./);
 assert.equal(document.activeElement,heading,'Removing the last saved title must focus the results heading');
 assert.deepEqual(JSON.parse(stored.get('ottscout-watchlist')),[],'Unsaving must persist');
 console.log('Watchlist toggles keep a stable name, announce accurate counts, and preserve focus.');
+
+// Exercise the actual action handlers and real timed announcer together.
+// A fast filter change must not cancel the action or leave an old count, and
+// a late toggle event from the removed date group must not announce stale data.
+context.setTimeout=fn=>{const id=++timerId;timers.set(id,fn);return id;};
+context.clearTimeout=id=>timers.delete(id);
+run(`announceResults=realAnnounceResults;pendingActionAnnouncement=false;pendingResultAnnouncement=null;
+  view='weekly';weeklyKind='all';weeklyOpen.clear();dismissed.clear();saved.clear();$('#search').value='';render();`);
+function flushAnnouncement(){assert.equal(timers.size,1);const fn=timers.values().next().value;timers.clear();fn();}
+flushAnnouncement();
+const oldWeeklyGroup=catalog.children[0];
+const realHide=cardById('motn:101').querySelector('.dismiss-title');
+realHide.onclick();
+oldWeeklyGroup.open=!oldWeeklyGroup.open;oldWeeklyGroup.fire('toggle');
+assert.equal(run('pendingResultAnnouncement'),null,'A detached group must not enqueue an outdated result count');
+run(`$('#search').value='no matching title';render();`);
+flushAnnouncement();
+assert.match(ids.get('#results-status').textContent,/^A rental film hidden\..*Updated results: This week: 0 matching titles/);
+run(`restoreHiddenTitles();$('#search').value='';render();`);
+flushAnnouncement();
+assert.match(ids.get('#results-status').textContent,/^1 hidden title restored\..*Updated results: This week: 2 matching titles/);
+run(`saved.add('motn:101');saved.add('motn:102');view='watchlist';render();`);
+flushAnnouncement();
+cardById('motn:101').querySelector('.save').onclick();
+run(`$('#search').value='no matching title';render();`);
+flushAnnouncement();
+assert.match(ids.get('#results-status').textContent,/^A rental film removed from your watchlist\..*Updated results: Watchlist: 0 titles match/);
+run(`announceResults=message=>{lastAnnouncement=message;};saved.clear();$('#search').value='';`);
+context.setTimeout=()=>0;context.clearTimeout=()=>{};
 
 // View controls describe their current state and count, including save actions
 // that update a card without rebuilding the catalogue.
