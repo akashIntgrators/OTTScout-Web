@@ -6,6 +6,7 @@ import {AccountSession} from './account-session.js';
 const $=selector=>document.querySelector(selector);
 const dialog=$('#account-dialog');
 const accountButton=$('#account-button');
+const MIN_SIGNUP_PASSWORD_LENGTH=8;
 let auth, db, currentUser=null, initialized=false, initializing=false, busy=false, deleting=false, mode='signin';
 let latest={uid:null,ids:new Set(),status:'guest',error:'',pending:0,ready:false};
 // Failure to read existing storage must never be mistaken for an empty watchlist.
@@ -42,7 +43,11 @@ function paint(){
   $('#account-form').hidden=mode==='reset';$('#account-reset-form').hidden=mode!=='reset';
   $('#account-switch').hidden=mode==='reset';$('#account-forgot').hidden=mode==='reset';
   $('#account-password').autocomplete=mode==='signup'?'new-password':'current-password';
-  $('#account-password').minLength=mode==='signup'?8:1;
+  $('#account-password').minLength=mode==='signup'?MIN_SIGNUP_PASSWORD_LENGTH:1;
+  $('#account-password-help').hidden=mode!=='signup';
+  $('#account-password-help').textContent=`Use at least ${MIN_SIGNUP_PASSWORD_LENGTH} characters.`;
+  if(mode==='signup')$('#account-password').setAttribute('aria-describedby','account-password-help');
+  else $('#account-password').removeAttribute('aria-describedby');
   $('#account-submit').textContent=mode==='signup'?'Create account':'Sign in';
   $('#account-switch').textContent=mode==='signup'?'Already have an account? Sign in':'New here? Create an account';
 }
@@ -55,7 +60,7 @@ function readable(error){
   if(code.includes('operation-not-allowed'))return 'This sign-in method is not enabled yet. Guest browsing still works.';
   if(code.includes('network-request-failed')||code.includes('unavailable'))return 'Cannot connect right now. Check your connection and try again.';
   if(code.includes('too-many-requests'))return 'Too many attempts. Please wait a while before trying again.';
-  if(code.includes('weak-password'))return 'Choose a password with at least eight characters.';
+  if(code.includes('weak-password'))return `Choose a password with at least ${MIN_SIGNUP_PASSWORD_LENGTH} characters.`;
   if(code.includes('invalid-email'))return 'Enter a valid email address.';
   if(code.includes('account-exists-with-different-credential')||code.includes('credential-already-in-use'))return 'This email uses another sign-in method. Sign in with the method you used before.';
   if(code.includes('user-disabled'))return 'This account is disabled. You can continue browsing as a guest.';
@@ -108,7 +113,7 @@ dialog?.addEventListener('close',()=>{ $('#account-password').value='';$('#delet
 $('#account-google')?.addEventListener('click',()=>perform(async()=>{await signInWithPopup(auth,new GoogleAuthProvider());dialog.close();}));
 $('#account-switch')?.addEventListener('click',()=>setMode(mode==='signup'?'signin':'signup'));
 $('#account-forgot')?.addEventListener('click',()=>{ $('#reset-email').value=$('#account-email-input').value;setMode('reset');$('#reset-email').focus(); });
-$('#account-reset-back')?.addEventListener('click',()=>setMode('signin'));
+$('#account-reset-back')?.addEventListener('click',()=>{setMode('signin');$('#account-email-input').focus();});
 $('#account-form')?.addEventListener('submit',event=>{event.preventDefault();perform(async()=>{
   const email=$('#account-email-input').value.trim(),password=$('#account-password').value;
   if(mode==='signup'){

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 from datetime import datetime, timezone, timedelta
 try:
     from scripts.site_features import apply_reports, valid_reports, netflix_id, schema_graph, json_script, language_label
@@ -257,7 +258,7 @@ def build(root=ROOT, now=None):
 <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">OTTScout</a><span aria-hidden="true"> / </span><span aria-current="page">{escape(title)}</span></nav>
 <h1>{escape(title)}</h1><p class="seo-description">{escape(description)}</p>{content}
 <section class="credits" aria-label="Data credits"><h2>Data credits</h2><a href="https://www.themoviedb.org"><img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg" width="56" height="40" alt="TMDB"></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p><p>Provider-sourced availability, audio options, title metadata and posters use <a href="https://www.movieofthenight.com/about/api">Streaming Availability API by Movie of the Night</a>. Dated official OTT listings can fill reported gaps, with their sources shown on title pages. TMDB supplies matched original-language and genre metadata.</p></section></main>
-<footer class="seo-footer"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><nav class="seo-nav" aria-label="Site information"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a><a href="/guides/">Streaming guides</a></nav><p>India · Availability may change. Audio and subtitles vary by platform.</p><a href="https://www.movieofthenight.com/about/api">Streaming Availability API by Movie of the Night</a></footer><script src="/analytics.js?v=2" defer></script></body></html>'''
+<footer class="seo-footer"><a class="brand" href="/" aria-label="OTTScout home"><img class="brand-mark" src="/assets/ottscout-mark.svg?v=brand14" width="36" height="36" alt="">OTT<span>Scout</span></a><nav id="site-information" class="seo-nav" aria-label="Site information" tabindex="-1"><a href="/about/">About</a><a href="/contact/">Contact</a><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account</a><a href="/audio-description/">Audio description</a><a href="/accessibility/">Accessibility help</a><a href="/guides/">Streaming guides</a></nav><p>India · Availability may change. Audio and subtitles vary by platform.</p><a href="https://www.movieofthenight.com/about/api">Streaming Availability API by Movie of the Night</a></footer><script src="/analytics.js?v=2" defer></script></body></html>'''
         dest = target / path.strip('/') / 'index.html'
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(markup, encoding='utf-8')
@@ -310,6 +311,25 @@ def build(root=ROOT, now=None):
                 addition = f' · Added {checked_date(max(weekly_offer_date(t, o, now) for o in offers), now)} · Premiere unverified' if weekly else ''
                 result.append(f'<li><a href="{title_path(t)}">{escape(t["title"])}</a> <span>· {escape(" · ".join(audio) or "Audio languages unverified")}</span><small>{escape(t["type"])} · {escape(providers)}{escape(addition)}</small></li>')
             return '<ul class="seo-list">' + ''.join(result) + '</ul>' if result else '<p>No matching titles in this snapshot. <a href="/">Explore the dashboard</a>.</p>'
+        def language_cards(items, language):
+            # Keep every matching title in the static page while giving keyboard
+            # and screen-reader users smaller, directly addressable lists.
+            groups = {}
+            for title in items:
+                if not offers_for(title, language):
+                    continue
+                first = unicodedata.normalize('NFKD', title['title'].strip()[:1]).upper()
+                initial = first[0] if first and first[0] in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' else ('0–9' if first and first[0] in '0123456789' else 'Other')
+                groups.setdefault(initial, []).append(title)
+            if not groups:
+                return cards([], language)
+            initials = sorted(groups, key=lambda initial: (initial == 'Other', initial != '0–9', initial))
+            anchor = lambda initial: 'titles-' + ('numbers' if initial == '0–9' else initial.lower())
+            index = '<nav class="seo-nav" aria-label="Browse titles by first character">' + ''.join(
+                f'<a href="#{anchor(initial)}">{escape(initial)}</a>' for initial in initials
+            ) + '</nav>'
+            sections = ''.join(f'<section><h2 id="{anchor(initial)}" tabindex="-1">{escape(initial)}</h2>{cards(groups[initial], language)}</section>' for initial in initials)
+            return index + sections
         picks = [
             ('motn:25736', 'For a revenge-action night', 'Yevadu builds its action story around a changed identity and the consequences that follow. Choose it when you want a high-concept revenge plot rather than a quiet character drama.'),
             ('motn:3522553', 'For a hometown romance', 'Rangabali connects a move to the city with romance and a renewed look at home. It is the pick here for viewers drawn to small-town connections and a lighter starting premise.'),
@@ -333,9 +353,11 @@ def build(root=ROOT, now=None):
 <p>On a title page, <strong>Availability checked</strong> is the date of OTTScout’s last recorded check. For a series, use the platform’s episode list to confirm which seasons are included. If you want a rental or subscription offer on a different service, check that offer separately.</p>
 <p>Some gaps are filled from dated official OTT listings. Their release dates are labelled separately and may have day precision. An official listing does not establish that we tested playback, every audio track, or every subscription plan.</p>
 <p><a href="/">Filter additions by your platforms</a> or <a href="/guides/">browse the streaming guides</a>.</p>'''
-        page('/this-week/', 'OTT additions this week in India', 'Recent provider additions and sourced official OTT releases in India. A series addition does not confirm a new season or episode.', note + weekly_guide + '<h2>Older movies added</h2><p>Films released before the current year, with a recent offer reported on a covered platform.</p>' + cards([t for t in recent if older_movie(t, now)], weekly=True) + '<h2>Other additions</h2><p>Series and movie additions, including dated official listings used to fill coverage gaps.</p>' + cards([t for t in recent if not older_movie(t, now)], weekly=True))
+        skip_lists = '<p><a href="#site-information">Skip title lists and go to site information</a></p>'
+        weekly_index = '<nav class="seo-nav" aria-label="Weekly title sections"><a href="#older-movies">Older movies added</a><a href="#other-additions">Other additions</a></nav>'
+        page('/this-week/', 'OTT additions this week in India', 'Recent provider additions and sourced official OTT releases in India. A series addition does not confirm a new season or episode.', note + weekly_guide + skip_lists + weekly_index + '<h2 id="older-movies" tabindex="-1">Older movies added</h2><p>Films released before the current year, with a recent offer reported on a covered platform.</p>' + cards([t for t in recent if older_movie(t, now)], weekly=True) + '<h2 id="other-additions" tabindex="-1">Other additions</h2><p>Series and movie additions, including dated official listings used to fill coverage gaps.</p>' + cards([t for t in recent if not older_movie(t, now)], weekly=True))
         for lang in LANGUAGES:
-            page(f'/languages/{lang.lower()}/', f'{lang} movies and series on OTT in India', f'Find movies and series with {lang} audio on covered streaming platforms in India. Check platform-specific audio, subtitles and subscription or rental options.', f'<h2>Choose {lang} audio with confidence</h2><p>This list matches audio reported on each platform, including dubbed versions. It does not mean every title was originally made in {lang}. Use Originally and Watch in separately on the dashboard.</p><p>Check the offer type before subscribing: a rental, purchase or paid add-on can be listed on the same service as a base-subscription option. Subtitles are listed separately on each title page.</p><p>Looking for narrated visual action? <a href="/audio-description/">Check the sourced audio-description guide</a>; ordinary {lang} audio does not establish an audio-description track.</p>' + note + cards(ordered, lang))
+            page(f'/languages/{lang.lower()}/', f'{lang} movies and series on OTT in India', f'Find movies and series with {lang} audio on covered streaming platforms in India. Check platform-specific audio, subtitles and subscription or rental options.', f'<h2>Choose {lang} audio with confidence</h2><p>This list matches audio reported on each platform, including dubbed versions. It does not mean every title was originally made in {lang}. Use Originally and Watch in separately on the dashboard.</p><p>Check the offer type before subscribing: a rental, purchase or paid add-on can be listed on the same service as a base-subscription option. Subtitles are listed separately on each title page.</p><p>Looking for narrated visual action? <a href="/audio-description/">Check the sourced audio-description guide</a>; ordinary {lang} audio does not establish an audio-description track.</p>' + note + skip_lists + language_cards(ordered, lang))
         names = {'subscription':'Included with subscription', 'free':'Free to watch', 'rent':'Rental', 'buy':'Purchase', 'addon':'Add-on subscription'}
         for t in titles:
             rows = []

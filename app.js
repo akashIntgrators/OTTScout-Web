@@ -22,6 +22,8 @@ let weeklyKind = 'all';
 let audioDescriptionOnly = readList('ottscout-audio-description')?.[0] === true;
 let shortcutsEnabled = readList('ottscout-shortcuts')?.[0] === true;
 let announcementTimer;
+let pendingActionAnnouncement = false;
+let pendingResultAnnouncement = null;
 let visibleLimit = PAGE_SIZE;
 let selectedSearchId=null;
 let suggestions=[];
@@ -117,9 +119,22 @@ function focusTitle(id) {
   const target=id && document.getElementById(titleDomId(id))?.querySelector('a');
   (target || $('#heading')).focus();
 }
-function announceResults(message) {
+function announceResults(message, action = false) {
+  // Preserve the action while retaining the latest result update that arrives
+  // during the debounce, including a quick filter change.
+  if (!action && pendingActionAnnouncement) { pendingResultAnnouncement=message; return; }
   clearTimeout(announcementTimer);
-  announcementTimer=setTimeout(()=>{ $('#results-status').textContent=message; },250);
+  pendingActionAnnouncement=action;
+  pendingResultAnnouncement=null;
+  const status=$('#results-status');
+  // A repeated message must still produce a DOM change for screen readers.
+  if (status.textContent) status.textContent='';
+  announcementTimer=setTimeout(()=>{
+    const latest=pendingResultAnnouncement;
+    status.textContent=latest && !message.endsWith(latest) ? `${message} Updated results: ${latest}` : message;
+    pendingActionAnnouncement=false;
+    pendingResultAnnouncement=null;
+  },250);
 }
 function weeklyTitle(title) {
   if (!liveCatalog) return Boolean(title.weekly);
@@ -312,20 +327,21 @@ function cardFor(title) {
     if (window.OTTScoutAccount) {
       accountToggleInProgress=true;
       let changed;try { changed=window.OTTScoutAccount.toggle(title.id); } finally { accountToggleInProgress=false; }
-      if (!changed) { announceResults('This title could not be saved. Open Account for details, or choose a live catalogue title.'); return; }
+      if (!changed) { announceResults('This title could not be saved. Open Account for details, or choose a live catalogue title.',true); return; }
     } else {
       saved.has(title.id) ? saved.delete(title.id) : saved.add(title.id);
       persist('ottscout-watchlist', saved);
     }
+    const message=`${title.title} ${saved.has(title.id)?'added to':'removed from'} your watchlist. ${saved.size} saved ${saved.size===1?'title':'titles'}.`;
     // Preserve focus when a saved card remains visible.
-    if (view === 'watchlist') { render();focusTitle(next); }
+    if (view === 'watchlist') { render(message);focusTitle(next); }
     else {
       save.textContent = saved.has(title.id) ? '✓' : '+'; // taste-skill-ignore: checked state, paired with aria-pressed.
       save.setAttribute('aria-pressed', saved.has(title.id));
       $('#count').textContent = saved.size;
       syncViewButtons();
+      announceResults(message,true);
     }
-    announceResults(`${title.title} ${saved.has(title.id)?'added to':'removed from'} your watchlist. ${saved.size} saved ${saved.size===1?'title':'titles'}.`);
   };
   const body = element('div', undefined, 'card-body');
   const audio = [...new Set(offers.flatMap(offer => audioDescriptionOnly ? descriptionLanguages(offer,title) : offer.audio))];
@@ -364,7 +380,7 @@ function cardFor(title) {
     const dismiss = element('button', 'Hide title', 'dismiss-title');
     dismiss.type = 'button';
     dismiss.setAttribute('aria-label', 'Hide title: ' + title.title);
-    dismiss.onclick = () => { const next=nextCardId(title.id);dismissed.add(title.id); persist('ottscout-dismissed', dismissed); render();focusTitle(next); };
+    dismiss.onclick = () => { const next=nextCardId(title.id);dismissed.add(title.id); persist('ottscout-dismissed', dismissed); render(`${title.title} hidden.`);focusTitle(next); };
     options.append(dismiss);
   }
   if (liveCatalog) options.append(element('p', `Availability checked ${checkedDate(title.lastCheckedAt)}`, 'checked-date'));
@@ -664,7 +680,7 @@ function weeklyGroupsContent(found) {
     }
     group.append(body);rendered.push({node:group,shown});
     let lastOpen=group.open;
-    group.addEventListener('toggle',event=>{if(event.target!==group||group.open===lastOpen)return;lastOpen=group.open;weeklyOpen.set(data.key,group.open);updateDateToggle();announceResults(description());});
+    group.addEventListener('toggle',event=>{if(event.target!==group||group.open===lastOpen||!$('#catalog').contains(group))return;lastOpen=group.open;weeklyOpen.set(data.key,group.open);updateDateToggle();announceResults(description());});
     return group;
   });
   return {content,description};
@@ -686,9 +702,9 @@ function pickRandomTitle() {
   const choice=randomTitle(filteredTitles());
   if(!choice)return;
   chooseSuggestion(choice);
-  announceResults('Random pick: '+choice.title+'. Your platform, language and other filters are retained.');
+  announceResults('Random pick: '+choice.title+'. Your platform, language and other filters are retained.',true);
 }
-function render() {
+function render(actionMessage = '') {
   activeFilterChips();syncQuickFilters();
   const found=filteredTitles();
   found.sort((a,b) => view === 'weekly' ? (weeklyAdditionTime(b)||0)-(weeklyAdditionTime(a)||0)||a.title.localeCompare(b.title)
@@ -718,7 +734,8 @@ function render() {
   updateDateToggle();
   $('#load-more').hidden = view==='weekly'||found.length <= visibleLimit;
   $('#load-more').textContent = `Show ${Math.min(PAGE_SIZE, Math.max(0,found.length-visibleLimit))} more titles`;
-  announceResults(weekly?weekly.description():`${{discover:'Discover',watchlist:'Watchlist',leaving:'Leaving soon'}[view]}: ${found.length} ${found.length===1?'title matches':'titles match'}. ${Math.min(visibleLimit,found.length)} shown.${audioDescriptionOnly?' Only provider-reported description languages matching Watch in are included; India playback is unverified.':''}`);
+  const resultMessage=weekly?weekly.description():`${{discover:'Discover',watchlist:'Watchlist',leaving:'Leaving soon'}[view]}: ${found.length} ${found.length===1?'title matches':'titles match'}. ${Math.min(visibleLimit,found.length)} shown.${audioDescriptionOnly?' Only provider-reported description languages matching Watch in are included; India playback is unverified.':''}`;
+  announceResults(actionMessage ? `${actionMessage} ${resultMessage}` : resultMessage, Boolean(actionMessage));
 }
 function resetFilters() {
   selectedPlatforms.clear(); availablePlatforms().forEach(name=>selectedPlatforms.add(name));
@@ -738,9 +755,8 @@ function restoreHiddenTitles() {
   const count=dismissed.size;
   dismissed.clear();
   persist('ottscout-dismissed',dismissed);
-  render();
+  render(count ? `${count} hidden ${count===1?'title':'titles'} restored. Current filters and view still apply.` : 'No hidden titles to restore.');
   $('#heading').focus();
-  announceResults(count ? `${count} hidden ${count===1?'title':'titles'} restored. Current filters and view still apply.` : 'No hidden titles to restore.');
 }
 function setupFilterPanel(menus) {
   const panel=$('#filters-panel');

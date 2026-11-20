@@ -120,6 +120,7 @@
         <form id="account-form">
           <label for="account-email-input">Email</label><input id="account-email-input" type="email" autocomplete="email" required maxlength="254">
           <label for="account-password">Password</label><input id="account-password" type="password" autocomplete="current-password" required minlength="1" maxlength="4096">
+          <p id="account-password-help" hidden></p>
           <button id="account-submit" class="account-primary" type="submit">Sign in</button>
         </form>
         <form id="account-reset-form" hidden><label for="reset-email">Email for password reset</label><input id="reset-email" type="email" autocomplete="email" required maxlength="254"><button class="account-primary" type="submit">Send reset email</button><button id="account-reset-back" class="account-text" type="button">Back to sign in</button></form>
@@ -138,8 +139,8 @@
     <p id="account-feedback" role="status" aria-live="polite" aria-atomic="true"></p>
     <div class="account-footer"><a href="/privacy/">Privacy</a><a href="/delete-account/">Delete account help</a><button id="account-continue" type="button">Continue as guest</button></div>
   </dialog>
-  <script src="app.js?v=share1"></script>
-  <script type="module" src="/account.js?v=accounts1"></script>
+  <script src="app.js?v=accessibility4"></script>
+  <script type="module" src="/account.js?v=accounts2"></script>
   <script src="/analytics.js?v=2" defer></script>
 </body>
 </html>
