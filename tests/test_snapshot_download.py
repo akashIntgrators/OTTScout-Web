@@ -3,11 +3,38 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from scripts import fetch_public_catalogue as fetcher
 
 
 class SnapshotDownloadTests(unittest.TestCase):
+    def test_transient_public_get_retries_with_a_new_cache_key_but_invalid_json_does_not(self):
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"ok":true}'
+        error = HTTPError(fetcher.BASE + '/data/catalog.json', 503, 'Unavailable', {}, None)
+        with patch.object(fetcher, 'build_opener') as opener, patch.object(fetcher.time, 'sleep') as sleep:
+            opener.return_value.open.side_effect = [error, response]
+            self.assertEqual(fetcher.get_json('/data/catalog.json', 100), {'ok': True})
+            calls = opener.return_value.open.call_args_list
+            self.assertEqual(len(calls), 2)
+            self.assertNotEqual(calls[0].args[0].full_url, calls[1].args[0].full_url)
+            sleep.assert_called_once_with(1)
+        response.__enter__.return_value.read.return_value = b'not json'
+        with patch.object(fetcher, 'build_opener') as opener:
+            opener.return_value.open.return_value = response
+            with self.assertRaises(ValueError): fetcher.get_json('/data/catalog.json', 100)
+            self.assertEqual(opener.return_value.open.call_count, 1)
+
+    def test_optional_status_failure_does_not_block_a_valid_catalogue(self):
+        root, catalog = self.fixture()
+        error = HTTPError(fetcher.BASE + '/data/catalogue-health.json', 503, 'Unavailable', {}, None)
+        with patch.object(fetcher, 'get_json', side_effect=[catalog, None, error]):
+            self.assertEqual(fetcher.main(['--root', str(root)]), 0)
+        self.assertEqual(json.loads((root / 'data/catalog.json').read_text()), catalog)
+        self.assertFalse((root / 'reports/previous-public-health.json').exists())
+        self.assertFalse((root / 'data/catalogue-health.json').exists())
+
     def fixture(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         root = Path(temp.name); (root / 'data').mkdir()
