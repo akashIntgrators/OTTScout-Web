@@ -229,12 +229,58 @@ class ReliabilityWorkflowTests(unittest.TestCase):
     def test_build_requires_public_snapshot_and_real_collector_or_recovery_output(self):
         build = step_with_id(self.collector, 'build')
         values = {'steps.snapshot.outcome': 'success', 'steps.checker.outcome': 'success', 'steps.recovery.outcome': 'skipped',
+                  'steps.enrichment.outcome': 'success', 'steps.cached_metadata.outcome': 'skipped',
                   'steps.overlay.outcome': 'success', 'steps.health.outcome': 'success', 'inputs.publish': True, 'vars.PUBLISH_CATALOG': 'false'}
         self.assertTrue(condition(build, values))
         self.assertFalse(condition(build, {**values, 'steps.snapshot.outcome': 'failure'}))
         self.assertFalse(condition(build, {**values, 'steps.checker.outcome': 'failure'}))
         self.assertTrue(condition(build, {**values, 'steps.checker.outcome': 'failure', 'steps.recovery.outcome': 'success'}))
         self.assertFalse(condition(build, {**values, 'steps.checker.outcome': 'skipped', 'steps.recovery.outcome': 'skipped'}))
+
+    def test_skipped_or_failed_network_enrichment_requires_cached_metadata_success_before_build(self):
+        cached = step_with_id(self.collector, 'cached_metadata')
+        self.assertEqual(script(cached).strip(), 'python scripts/tmdb_enrich.py --cached-only')
+        build = step_with_id(self.collector, 'build')
+        values = {'steps.snapshot.outcome': 'success', 'steps.checker.outcome': 'success', 'steps.recovery.outcome': 'skipped',
+                  'steps.enrichment.outcome': 'skipped', 'steps.cached_metadata.outcome': 'skipped',
+                  'steps.overlay.outcome': 'success', 'steps.health.outcome': 'success', 'inputs.publish': True, 'vars.PUBLISH_CATALOG': 'false'}
+        for enrichment in ('skipped', 'failure'):
+            with self.subTest(enrichment=enrichment):
+                self.assertTrue(condition(cached, {**values, 'steps.enrichment.outcome': enrichment}))
+                for outcome in ('skipped', 'failure', 'cancelled'):
+                    self.assertFalse(condition(build, {**values, 'steps.enrichment.outcome': enrichment, 'steps.cached_metadata.outcome': outcome}))
+                self.assertTrue(condition(build, {**values, 'steps.enrichment.outcome': enrichment, 'steps.cached_metadata.outcome': 'success'}))
+        self.assertFalse(condition(cached, {**values, 'steps.enrichment.outcome': 'success'}))
+        self.assertTrue(condition(build, {**values, 'steps.enrichment.outcome': 'success'}))
+        self.assertTrue(condition(cached, {**values, 'steps.checker.outcome': 'failure', 'steps.recovery.outcome': 'success'}))
+        self.assertFalse(condition(cached, {**values, 'steps.checker.outcome': 'failure'}))
+
+    def test_offline_workflow_keeps_cached_metadata_route_and_never_selects_network_enrichment(self):
+        checker = step_with_id(self.collector, 'checker'); metadata = step_with_id(self.collector, 'metadata')
+        enrich = step_with_id(self.collector, 'enrichment'); cached = step_with_id(self.collector, 'cached_metadata')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); log = root / 'argv.jsonl'; output = root / 'output'; (root / 'reports').mkdir()
+            (root / 'reports/pilot.json').write_text(json.dumps({'requestBudget': {'conservationMode': False}, 'pendingChangeQueries': {}}))
+            flags = {'METADATA_ONLY': 'true', 'OFFLINE_ONLY': 'true', 'INITIALIZE': 'false'}
+            self.run_script(script(checker), root, {**flags, 'ARGV_LOG': str(log)}, record=True)
+            self.run_script(script(metadata), root, {**flags, 'GITHUB_OUTPUT': str(output)})
+            self.assertEqual(output.read_text(), 'allowed=false\n')
+            outcomes = {'steps.checker.outcome': 'success', 'steps.recovery.outcome': 'skipped',
+                        'steps.metadata.outputs.allowed': 'false', 'steps.enrichment.outcome': 'skipped'}
+            self.assertFalse(condition(enrich, outcomes)); self.assertTrue(condition(cached, outcomes))
+            self.run_script(script(cached), root, {'ARGV_LOG': str(log)}, record=True)
+            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()],
+                             [['scripts/catalog_sync.py', '--export-cached'], ['scripts/tmdb_enrich.py', '--cached-only']])
+
+    def test_cached_metadata_failure_reaches_actual_health_input_guard(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); log = root / 'argv.jsonl'
+            outcomes = {'COLLECTOR_OUTCOME': 'success', 'RECOVERY_OUTCOME': 'skipped', 'DISCOVERY_OUTCOME': 'success',
+                        'OVERLAY_OUTCOME': 'success', 'ENRICHMENT_OUTCOME': 'skipped', 'CACHED_METADATA_OUTCOME': 'failure',
+                        'SNAPSHOT_OUTCOME': 'success', 'ARGV_LOG': str(log)}
+            self.run_script(script(step_with_id(self.collector, 'health')), root, outcomes, record=True)
+            args = json.loads(log.read_text().splitlines()[0])
+            self.assertEqual(args[-2:], ['--input-error', 'cached_metadata_failed'])
 
     def test_actual_readonly_ledger_program_cannot_save_missing_empty_or_corrupt_state(self):
         source = script(step_with_id(self.collector, 'ledger'))

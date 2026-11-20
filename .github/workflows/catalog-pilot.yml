@@ -120,6 +120,11 @@ jobs:
           TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
           TMDB_RUN_REQUEST_LIMIT: ${{ vars.TMDB_RUN_REQUEST_LIMIT || '300' }}
         run: python scripts/tmdb_enrich.py
+      - name: Retain known languages and genres without metadata requests
+        id: cached_metadata
+        if: (steps.checker.outcome == 'success' || steps.recovery.outcome == 'success') && steps.enrichment.outcome != 'success'
+        continue-on-error: true
+        run: python scripts/tmdb_enrich.py --cached-only
       - name: Check supported official listings automatically
         id: discovery
         if: always()
@@ -145,6 +150,7 @@ jobs:
           DISCOVERY_OUTCOME: ${{ steps.discovery.outcome }}
           OVERLAY_OUTCOME: ${{ steps.overlay.outcome }}
           ENRICHMENT_OUTCOME: ${{ steps.enrichment.outcome }}
+          CACHED_METADATA_OUTCOME: ${{ steps.cached_metadata.outcome }}
           SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
         shell: bash
         run: |
@@ -155,10 +161,11 @@ jobs:
           if [[ "$DISCOVERY_OUTCOME" == 'failure' ]]; then args+=(--input-error official_discovery_failed); fi
           if [[ "$OVERLAY_OUTCOME" != 'success' ]]; then args+=(--input-error official_overlay_failed); fi
           if [[ "$ENRICHMENT_OUTCOME" == 'failure' ]]; then args+=(--input-error metadata_enrichment_failed); fi
+          if [[ "$CACHED_METADATA_OUTCOME" == 'failure' ]]; then args+=(--input-error cached_metadata_failed); fi
           python scripts/catalogue_health.py --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --required-source sony-movies --required-source sony-series "${args[@]}"
       - name: Build catalogue and public status
         id: build
-        if: steps.snapshot.outcome == 'success' && (steps.checker.outcome == 'success' || steps.recovery.outcome == 'success') && steps.overlay.outcome == 'success' && steps.health.outcome == 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
+        if: steps.snapshot.outcome == 'success' && (steps.checker.outcome == 'success' || steps.recovery.outcome == 'success') && (steps.enrichment.outcome == 'success' || steps.cached_metadata.outcome == 'success') && steps.overlay.outcome == 'success' && steps.health.outcome == 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
         run: python scripts/build_site.py
       - name: Configure Pages
         if: steps.build.outcome == 'success'

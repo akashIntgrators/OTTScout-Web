@@ -1,8 +1,13 @@
 import copy
+from contextlib import redirect_stdout
 import importlib.util
+import io
+import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 spec = importlib.util.spec_from_file_location('tmdb',Path(__file__).parents[1]/'scripts/tmdb_enrich.py')
 tmdb=importlib.util.module_from_spec(spec);spec.loader.exec_module(tmdb)
 TITLE={'id':'motn:7','title':'Test Film','type':'Movie','year':2025,'offers':[{'platform':'Netflix','audio':['Hindi']}],'originalLanguage':'Hindi'}
@@ -16,6 +21,72 @@ class Fake:
         if isinstance(result,Exception):raise result
         return copy.deepcopy(result)
 class MetadataTests(unittest.TestCase):
+    def cached_cli(self, source, cache):
+        with mock.patch.dict(os.environ, {'TMDB_READ_ACCESS_TOKEN':'test-token',
+                 'TMDB_REFRESH_IDS':'invalid repair value', 'GITHUB_STEP_SUMMARY':''}), \
+             mock.patch.object(tmdb, 'Client', side_effect=AssertionError('Cached mode constructed an API client')), \
+             mock.patch.object(tmdb, 'repair_external_ids', side_effect=AssertionError('Cached mode repaired IDs')), \
+             mock.patch.object(tmdb, 'urlopen', side_effect=AssertionError('Cached mode accessed the network')), \
+             mock.patch.object(tmdb.time, 'time', return_value=40*tmdb.DAY), redirect_stdout(io.StringIO()):
+            self.assertEqual(tmdb.main(['--catalog',str(source),'--cache',str(cache),'--cached-only']),0)
+        return json.loads(source.read_text())
+
+    def test_cached_only_cli_ignores_credentials_and_repairs_but_preserves_matches(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache=Path(folder)/'cache.sqlite'; source=Path(folder)/'catalog.json'
+            raw={**copy.deepcopy(TITLE),'tmdbId':77}
+            db=tmdb.open_cache(cache)
+            tmdb.enrich({'titles':[copy.deepcopy(raw)]},db,Fake({'/movie/77':DETAILS}),1000)
+            before=db.execute('SELECT * FROM metadata').fetchall(); db.close()
+            source.write_text(json.dumps({'titles':[raw]}))
+            catalog=self.cached_cli(source,cache); title=catalog['titles'][0]
+            self.assertEqual(title['originalLanguage'],'Kannada')
+            self.assertEqual(title['originalLanguageSource'],'TMDB')
+            self.assertEqual(title['providerOriginalLanguage'],'Hindi')
+            self.assertEqual(title['providerOriginalLanguageSource'],'Streaming Availability API')
+            self.assertEqual(title['offers'],raw['offers'])
+            self.assertEqual(title['tmdb']['genres'],['Drama'])
+            self.assertEqual(title['tmdb']['checkedAt'],1000)
+            self.assertEqual(title['tmdbMatchStatus'],'matched')
+            self.assertEqual(catalog['tmdbEnrichment']['status'],'cached')
+            self.assertEqual(catalog['tmdbEnrichment']['requestsThisRun'],0)
+            db=tmdb.open_cache(cache)
+            self.assertEqual(db.execute('SELECT * FROM metadata').fetchall(),before); db.close()
+
+    def test_cached_only_cli_keeps_original_source_when_cached_original_is_unknown(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache=Path(folder)/'cache.sqlite'; source=Path(folder)/'catalog.json'
+            official='https://www.hotstar.com/in/shows/test-film/123'
+            raw={**copy.deepcopy(TITLE),'tmdbId':77,'originalLanguage':'Tamil','originalLanguageSource':official}
+            db=tmdb.open_cache(cache)
+            tmdb.enrich({'titles':[copy.deepcopy(raw)]},db,Fake({'/movie/77':{**DETAILS,'original_language':None}}),1000)
+            db.close(); source.write_text(json.dumps({'titles':[raw]}))
+            title=self.cached_cli(source,cache)['titles'][0]
+            self.assertEqual(title['originalLanguage'],'Tamil')
+            self.assertEqual(title['originalLanguageSource'],official)
+            self.assertEqual(title['providerOriginalLanguageSource'],official)
+            self.assertEqual(title['tmdb']['genres'],['Drama'])
+            self.assertIsNone(title['tmdb']['originalLanguage'])
+            self.assertEqual(title['tmdb']['checkedAt'],1000)
+
+    def test_cached_only_cli_rejects_changed_identity_and_does_not_guess_audio_original(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache=Path(folder)/'cache.sqlite'; source=Path(folder)/'catalog.json'
+            old={**copy.deepcopy(TITLE),'tmdbId':77}; db=tmdb.open_cache(cache)
+            tmdb.enrich({'titles':[old]},db,Fake({'/movie/77':DETAILS}),1000)
+            db.close(); changed={**old,'tmdbId':78}
+            unknown={**copy.deepcopy(TITLE),'id':'motn:8','originalLanguage':None}
+            source.write_text(json.dumps({'titles':[changed,unknown]}))
+            catalog=self.cached_cli(source,cache); title,missing=catalog['titles']
+            self.assertNotIn('tmdb',title)
+            self.assertEqual(title['originalLanguage'],'Hindi')
+            self.assertEqual(title['originalLanguageSource'],'Streaming Availability API')
+            self.assertEqual(title['tmdbMatchStatus'],'pending')
+            self.assertIsNone(missing['originalLanguage'])
+            self.assertEqual(missing['tmdbMatchStatus'],'pending')
+            self.assertEqual(missing['offers'],unknown['offers'])
+            self.assertEqual(catalog['tmdbEnrichment']['matched'],0)
+
     def test_official_original_language_keeps_its_source_across_repeated_enrichment(self):
         with tempfile.TemporaryDirectory() as folder:
             db=tmdb.open_cache(Path(folder)/'cache.sqlite')
