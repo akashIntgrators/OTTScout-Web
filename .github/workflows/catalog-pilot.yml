@@ -182,7 +182,7 @@ jobs:
       - name: Deploy catalogue and status
         id: deployment
         if: steps.build.outcome == 'success' && steps.pages_ready.outcome == 'success'
-        uses: actions/deploy-pages@v4
+        uses: ./.github/actions/publish-pages
       - name: Keep failed publication from closing an incident
         id: publication_guard
         if: always() && steps.health.outcome == 'success' && steps.deployment.outcome != 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')

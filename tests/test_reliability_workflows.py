@@ -29,6 +29,8 @@ def steps(text):
 
 def field(step, name):
     match = re.search(r'^        ' + re.escape(name) + r': (.+)$', step, re.MULTILINE)
+    if match is None:
+        match = re.search(r'^      - ' + re.escape(name) + r': (.+)$', step, re.MULTILINE)
     return match[1] if match else None
 
 
@@ -88,6 +90,12 @@ class ReliabilityWorkflowTests(unittest.TestCase):
         self.collector = workflow('catalog-pilot.yml')
         self.watchdog = workflow('catalogue-watchdog.yml')
         self.publisher = workflow('publish-site.yml')
+        self.publish_action = (ROOT / '.github/actions/publish-pages/action.yml').read_text(encoding='utf-8')
+
+    def action_steps(self):
+        # Composite children are two spaces shallower than job steps. Normalize
+        # indentation only, then execute the same checked-in guards and scripts.
+        return steps('\n'.join('  ' + line for line in self.publish_action.splitlines()))
 
     def run_script(self, source, root, extra, record=False):
         binary = root / 'bin'; binary.mkdir(exist_ok=True)
@@ -201,6 +209,7 @@ class ReliabilityWorkflowTests(unittest.TestCase):
                 ordered = steps(text)
                 upload = step_with_id(text, 'pages_upload'); ready = step_with_id(text, 'pages_ready')
                 deploy = step_with_id(text, 'deployment')
+                self.assertEqual(field(deploy, 'uses'), './.github/actions/publish-pages')
                 self.assertIn('uses: actions/upload-pages-artifact@v3', upload)
                 self.assertLess(ordered.index(upload), ordered.index(ready)); self.assertLess(ordered.index(ready), ordered.index(deploy))
                 self.assertTrue(condition(ready, {'steps.pages_upload.outcome': 'success'}))
@@ -244,6 +253,80 @@ class ReliabilityWorkflowTests(unittest.TestCase):
         for step in steps(self.publisher):
             if field(step, 'id') != 'pages_ready':
                 self.assertNotIn('GH_TOKEN:', step)
+
+    def run_publish_action(self, outcomes, urls):
+        """Run actual composite guards/shell with injected official-action results."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); output = root / 'output'; sleep_log = root / 'sleep'
+            binary = root / 'bin'; binary.mkdir()
+            sleeper = binary / 'sleep'
+            sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$SLEEP_LOG"\n'); sleeper.chmod(0o755)
+            values = {}
+            for index in range(1, 4):
+                values['steps.attempt_' + str(index) + '.outcome'] = 'skipped'
+                values['steps.attempt_' + str(index) + '.outputs.page_url'] = ''
+            attempts = []
+            failure = None
+            for step in self.action_steps():
+                ident = field(step, 'id')
+                if field(step, 'if') is not None and not condition(step, values):
+                    continue
+                if field(step, 'uses') is not None:
+                    self.assertEqual(field(step, 'uses'), 'actions/deploy-pages@v5.0.1')
+                    self.assertEqual(field(step, 'continue-on-error'), 'true')
+                    attempts.append(ident)
+                    values['steps.' + ident + '.outcome'] = outcomes[len(attempts) - 1]
+                    values['steps.' + ident + '.outputs.page_url'] = urls[len(attempts) - 1]
+                    continue
+                env = {'GITHUB_OUTPUT': str(output), 'SLEEP_LOG': str(sleep_log)}
+                for match in re.finditer(r'^          ([A-Z_]+): (\$\{\{[^\n]+\}\})$', step, re.MULTILINE):
+                    env[match[1]] = expression_value(match[2], values)
+                try:
+                    self.run_script(script(step), root, env)
+                except subprocess.CalledProcessError as error:
+                    failure = error.returncode
+                    break
+            return attempts, sleep_log.read_text().splitlines() if sleep_log.exists() else [], output.read_text() if output.exists() else '', failure
+
+    def test_composite_uses_exact_official_action_and_bounded_inputs_and_exports_result_url(self):
+        attempts = [step for step in self.action_steps() if field(step, 'uses') is not None]
+        self.assertEqual(len(attempts), 3)
+        for step in attempts:
+            self.assertEqual(field(step, 'uses'), 'actions/deploy-pages@v5.0.1')
+            self.assertEqual(field(step, 'continue-on-error'), 'true')
+            self.assertRegex(step, r"(?m)^          timeout: '120000'$")
+        self.assertIn('value: ${{ steps.result.outputs.page_url }}', self.publish_action)
+        self.assertNotRegex(self.publish_action, r'catalog_sync|tmdb_enrich|official_discovery|STREAMING_API_KEY|TMDB_READ_ACCESS_TOKEN|permissions:')
+        self.assertEqual(condition(next(step for step in self.action_steps() if field(step, 'id') == 'result'), {}), True)
+
+    def test_actual_composite_first_success_skips_both_waits_and_later_attempts(self):
+        attempts, waits, output, failure = self.run_publish_action(['success'], ['https://ottscout.techiwithhelmet.com/'])
+        self.assertEqual(attempts, ['attempt_1']); self.assertEqual(waits, [])
+        self.assertEqual(output, 'page_url=https://ottscout.techiwithhelmet.com/\n'); self.assertIsNone(failure)
+
+    def test_actual_composite_second_success_waits_once_and_ignores_failed_action_url(self):
+        attempts, waits, output, failure = self.run_publish_action(['failure', 'success'],
+            ['https://failed.example/not-published', 'https://ottscout.techiwithhelmet.com/'])
+        self.assertEqual(attempts, ['attempt_1', 'attempt_2']); self.assertEqual(waits, ['15'])
+        self.assertEqual(output, 'page_url=https://ottscout.techiwithhelmet.com/\n'); self.assertIsNone(failure)
+
+    def test_actual_composite_third_success_has_only_fifteen_then_thirty_second_waits(self):
+        attempts, waits, output, failure = self.run_publish_action(['failure', 'failure', 'success'],
+            ['https://failed.example/first', 'https://failed.example/second', 'https://ottscout.techiwithhelmet.com/'])
+        self.assertEqual(attempts, ['attempt_1', 'attempt_2', 'attempt_3']); self.assertEqual(waits, ['15', '30'])
+        self.assertEqual(output, 'page_url=https://ottscout.techiwithhelmet.com/\n'); self.assertIsNone(failure)
+
+    def test_actual_composite_all_failures_fail_parent_despite_nonempty_early_outputs(self):
+        attempts, waits, output, failure = self.run_publish_action(['failure'] * 3, ['https://not-published.example/'] * 3)
+        self.assertEqual(attempts, ['attempt_1', 'attempt_2', 'attempt_3']); self.assertEqual(waits, ['15', '30'])
+        self.assertEqual(output, ''); self.assertEqual(failure, 1)
+
+    def test_actual_composite_refuses_unsafe_or_missing_success_url_without_output_injection(self):
+        for value in ['', 'http://untrusted.example/', 'https://user:password@example.com/', 'https://example.com/\nother=output']:
+            with self.subTest(value=value):
+                attempts, waits, output, failure = self.run_publish_action(['success'], [value])
+                self.assertEqual(attempts, ['attempt_1']); self.assertEqual(waits, [])
+                self.assertEqual(output, ''); self.assertEqual(failure, 1)
 
     def test_incident_reconciliation_follows_failed_publication_guard_in_both_workflows(self):
         for name, text in [('collector', self.collector), ('watchdog', self.watchdog)]:

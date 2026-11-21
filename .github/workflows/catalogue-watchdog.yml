@@ -84,7 +84,7 @@ jobs:
       - name: Publish status without movie API requests
         id: deployment
         if: steps.build.outcome == 'success' && steps.pages_ready.outcome == 'success'
-        uses: actions/deploy-pages@v4
+        uses: ./.github/actions/publish-pages
       - name: Preserve an incident if status publication failed
         id: publication_guard
         if: always() && steps.health.outcome == 'success' && steps.deployment.outcome != 'success'
