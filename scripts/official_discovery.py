@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import re
 import time
+import tempfile
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -231,7 +232,15 @@ def sony_state(html):
             except ValueError:raise DiscoveryError('parser-changed','Sony public state is not valid JSON') from None
     require(len(states)==1 and isinstance(states[0],dict),'parser-changed','Sony public HTML state missing or ambiguous')
     state=states[0]
-    require(state.get('country',{}).get('resultObj',{}).get('country')=='India','region-unverified','Sony page does not explicitly identify India')
+    country=state.get('country')
+    result=country.get('resultObj') if isinstance(country,dict) else None
+    region=result.get('country') if isinstance(result,dict) else None
+    if region != 'India':
+        # Keep the India-only gate and distinguish a nonexact value from
+        # missing or malformed evidence without reporting arbitrary HTML.
+        observed = isinstance(region,str) and bool(re.fullmatch(r'[A-Za-z][A-Za-z .-]{0,63}',region))
+        message = 'Sony region is not an exact India match' if observed else 'Sony did not provide a usable region'
+        raise DiscoveryError('region-unverified',message)
     return state,document
 
 
@@ -492,13 +501,28 @@ def main():
     parser.add_argument('--max-requests',type=int,default=12)
     parser.add_argument('--max-seconds',type=int,default=120)
     parser.add_argument('--now',type=int,default=None)
+    parser.add_argument('--sony-ssh-host',default=None)
+    parser.add_argument('--sony-ssh-identity',default=None)
+    parser.add_argument('--sony-ssh-known-hosts',default=None)
     args=parser.parse_args();now=args.now or int(time.time())
     require(1<=args.max_requests<=12 and 1<=args.max_seconds<=300,'invalid-limit','Discovery limits are out of range')
     sources=read_json(args.sources,DEFAULT_SOURCES)
     require(isinstance(sources,list) and all(s in DEFAULT_SOURCES for s in sources),'source-invalid','Only reviewed official sources may run')
     catalog=read_json(args.catalog,{}) if args.catalog else {}
-    records,report=discover(args.cache_dir,now,catalog=catalog,sources=sources,
-        client=PublicClient(Path(args.cache_dir)/'http',now,max_requests=args.max_requests,max_seconds=args.max_seconds))
+    relay_args=(args.sony_ssh_host,args.sony_ssh_identity,args.sony_ssh_known_hosts)
+    require(not any(relay_args) or all(relay_args),'relay-config','All Sony relay settings are required')
+    if all(relay_args):
+        # Never reuse another egress location's cached HTML or conditional headers.
+        from sony_india_transport import SonyIndiaTransport
+        transport=SonyIndiaTransport(*relay_args)
+        with tempfile.TemporaryDirectory(prefix='ottscout-india-http-') as http_dir:
+            try:
+                records,report=discover(args.cache_dir,now,catalog=catalog,sources=sources,
+                    client=PublicClient(http_dir,now,max_requests=args.max_requests,max_seconds=args.max_seconds,transport=transport))
+            finally:transport.close()
+    else:
+        records,report=discover(args.cache_dir,now,catalog=catalog,sources=sources,
+            client=PublicClient(Path(args.cache_dir)/'http',now,max_requests=args.max_requests,max_seconds=args.max_seconds))
     atomic_json(args.output,records);atomic_json(args.report,report)
     print(json.dumps({'confirmed':len(records),'publicRequests':report['publicRequests'],'sources':[{k:s[k] for k in ('id','status','candidates','confirmed','gaps')} for s in report['sources']]}))
 
