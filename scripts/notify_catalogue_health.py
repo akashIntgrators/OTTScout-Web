@@ -137,6 +137,19 @@ def issue_body(report, incident, now, mention=None, workflow=None, recovered=Fal
         lines += ['Signals:', ''] + ['- `' + c['code'] + '` — ' + c['severity'] for c in report['causes']] + ['']
     else:
         lines += ['All monitored operational signals are healthy. Catalogue coverage remains partial.', '']
+    discovery = report.get('officialDiscovery')
+    sources = discovery.get('sources') if isinstance(discovery, dict) else None
+    names = {'sony-movies': 'SonyLIV movies', 'sony-series': 'SonyLIV series'}
+    region_notes = {'not-exact-india': 'the returned region did not exactly identify India',
+                    'missing-or-malformed': 'the returned region was missing or malformed'}
+    if isinstance(sources, list):
+        notes = set()
+        for source in sources[:50]:
+            if not isinstance(source, dict) or source.get('status') != 'error': continue
+            ident, evidence = source.get('id'), source.get('regionEvidence')
+            if isinstance(ident, str) and isinstance(evidence, str) and ident in names and evidence in region_notes:
+                notes.add('- ' + names[ident] + ': ' + region_notes[evidence] + '.')
+        if notes: lines += ['Sony region checks:', ''] + sorted(notes) + ['']
     new_feed = report.get('newFeed', {})
     completed = timestamp(new_feed.get('completedThrough')) if isinstance(new_feed, dict) else None
     lines += ['New-release feed complete through: ' + (iso(completed) or 'not confirmed') + '.']

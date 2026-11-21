@@ -379,6 +379,22 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
         gaps = count(source.get('gaps'))
         errors = source.get('errors', [])
         error_count = len(errors) if isinstance(errors, list) else count(errors)
+        # Only these fixed diagnostics may survive into the public report. Do
+        # not copy raw source messages, titles, or arbitrary page content.
+        region_diagnostics = {
+            'Sony region is not an exact India match': 'not-exact-india',
+            'Sony did not provide a usable region': 'missing-or-malformed',
+        }
+        region_evidence = None
+        if ident in ('sony-movies', 'sony-series') and status == 'error' and error_count:
+            if isinstance(errors, list):
+                for error in errors[:50]:
+                    if isinstance(error, dict) and error.get('code') == 'region-unverified':
+                        region_evidence = region_diagnostics.get(error.get('message')) if isinstance(error.get('message'), str) else None
+                        if region_evidence: break
+            elif source.get('regionEvidence') in region_diagnostics.values():
+                # The independent watchdog reuses the already-redacted report.
+                region_evidence = source['regionEvidence']
         result = {'id': ident, 'platform': source.get('platform') if source.get('platform') in PLATFORMS else None,
                   'lastAttemptAt': iso(attempted), 'lastSuccessAt': iso(success), 'status': status, 'required': required,
                   'candidates': count(source.get('candidates')), 'confirmed': count(source.get('confirmed')),
@@ -386,6 +402,8 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
                   'sourceFlagConflicts': flag_conflicts, 'errors': error_count}
         if status == 'paused' and source.get('pauseReason') == 'permission-required':
             result['pauseReason'] = 'permission-required'
+        if region_evidence:
+            result['regionEvidence'] = region_evidence
         source_results.append(result)
         unverified_total += unresolved or 0
         flag_conflicts_total += flag_conflicts
@@ -394,13 +412,13 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
         if status in ('unsupported', 'disabled'):
             add('official_source_unsupported:' + ident, 'critical', 'A required official-release source is unavailable.')
         if success is None or attempted is None or status == 'unknown' or unresolved is None or error_count is None:
-            add('official_source_unknown:' + ident, 'critical', 'An official-release source lacks valid scan evidence.')
+            add('official_source_unknown:' + ident, 'critical', 'Sony region did not meet the exact India verification check.' if region_evidence else 'An official-release source lacks valid scan evidence.', **({'regionEvidence': region_evidence} if region_evidence else {}))
         else:
             age = (now - success) / HOUR
             if age > limits['warningHours']:
                 add('official_source_stale:' + ident, age_level(age), 'An official-release source has not been scanned successfully recently.', ageHours=round(age, 2))
             if status in ('error', 'blocked') or error_count:
-                add('official_source_failed:' + ident, 'critical' if age > limits['warningHours'] else 'warning', 'An official-release source scan or verification failed.', errors=error_count)
+                add('official_source_failed:' + ident, 'critical' if age > limits['warningHours'] else 'warning', 'Sony region did not meet the exact India verification check.' if region_evidence else 'An official-release source scan or verification failed.', errors=error_count, **({'regionEvidence': region_evidence} if region_evidence else {}))
         if status == 'partial' or (unresolved or 0) or (gaps or 0):
             add('official_verification_pending:' + ident, 'warning', 'Some official-release candidates remain unverified.', candidates=unresolved or 0, gaps=gaps or 0)
         if flag_conflicts:
