@@ -211,6 +211,11 @@ class ReliabilityWorkflowTests(unittest.TestCase):
                 deploy = step_with_id(text, 'deployment')
                 self.assertEqual(field(deploy, 'uses'), './.github/actions/publish-pages')
                 self.assertIn('uses: actions/upload-pages-artifact@v3', upload)
+                name = 'github-pages-${{ github.run_id }}-${{ github.run_attempt }}'
+                self.assertIn('name: ' + name, upload)
+                self.assertIn('PAGES_ARTIFACT_NAME: ' + name, ready)
+                self.assertIn('PAGES_ARTIFACT_ID: ${{ steps.pages_upload.outputs.artifact_id }}', ready)
+                self.assertIn('artifact_name: ' + name, deploy)
                 self.assertLess(ordered.index(upload), ordered.index(ready)); self.assertLess(ordered.index(ready), ordered.index(deploy))
                 self.assertTrue(condition(ready, {'steps.pages_upload.outcome': 'success'}))
                 self.assertFalse(condition(ready, {'steps.pages_upload.outcome': 'failure'}))
@@ -295,6 +300,7 @@ class ReliabilityWorkflowTests(unittest.TestCase):
             self.assertEqual(field(step, 'uses'), 'actions/deploy-pages@v5.0.1')
             self.assertEqual(field(step, 'continue-on-error'), 'true')
             self.assertRegex(step, r"(?m)^          timeout: '120000'$")
+            self.assertIn('artifact_name: ${{ inputs.artifact_name }}', step)
         self.assertIn('value: ${{ steps.result.outputs.page_url }}', self.publish_action)
         self.assertNotRegex(self.publish_action, r'catalog_sync|tmdb_enrich|official_discovery|STREAMING_API_KEY|TMDB_READ_ACCESS_TOKEN|permissions:')
         self.assertEqual(condition(next(step for step in self.action_steps() if field(step, 'id') == 'result'), {}), True)
@@ -304,21 +310,29 @@ class ReliabilityWorkflowTests(unittest.TestCase):
         self.assertEqual(attempts, ['attempt_1']); self.assertEqual(waits, [])
         self.assertEqual(output, 'page_url=https://ottscout.techiwithhelmet.com/\n'); self.assertIsNone(failure)
 
-    def test_actual_composite_second_success_waits_once_and_ignores_failed_action_url(self):
+    def test_actual_composite_second_success_waits_once_after_a_failure_without_deployment_url(self):
         attempts, waits, output, failure = self.run_publish_action(['failure', 'success'],
-            ['https://failed.example/not-published', 'https://ottscout.techiwithhelmet.com/'])
+            ['', 'https://ottscout.techiwithhelmet.com/'])
         self.assertEqual(attempts, ['attempt_1', 'attempt_2']); self.assertEqual(waits, ['15'])
         self.assertEqual(output, 'page_url=https://ottscout.techiwithhelmet.com/\n'); self.assertIsNone(failure)
 
     def test_actual_composite_third_success_has_only_fifteen_then_thirty_second_waits(self):
         attempts, waits, output, failure = self.run_publish_action(['failure', 'failure', 'success'],
-            ['https://failed.example/first', 'https://failed.example/second', 'https://ottscout.techiwithhelmet.com/'])
+            ['', '', 'https://ottscout.techiwithhelmet.com/'])
         self.assertEqual(attempts, ['attempt_1', 'attempt_2', 'attempt_3']); self.assertEqual(waits, ['15', '30'])
         self.assertEqual(output, 'page_url=https://ottscout.techiwithhelmet.com/\n'); self.assertIsNone(failure)
 
-    def test_actual_composite_all_failures_fail_parent_despite_nonempty_early_outputs(self):
-        attempts, waits, output, failure = self.run_publish_action(['failure'] * 3, ['https://not-published.example/'] * 3)
+    def test_actual_composite_all_failures_without_urls_fail_parent(self):
+        attempts, waits, output, failure = self.run_publish_action(['failure'] * 3, [''] * 3)
         self.assertEqual(attempts, ['attempt_1', 'attempt_2', 'attempt_3']); self.assertEqual(waits, ['15', '30'])
+        self.assertEqual(output, ''); self.assertEqual(failure, 1)
+
+    def test_failed_attempt_with_deployment_url_stops_without_retry(self):
+        attempts, waits, output, failure = self.run_publish_action(['failure'], ['https://possibly-deployed.example/'])
+        self.assertEqual(attempts, ['attempt_1']); self.assertEqual(waits, [])
+        self.assertEqual(output, ''); self.assertEqual(failure, 1)
+        attempts, waits, output, failure = self.run_publish_action(['failure', 'failure'], ['', 'https://possibly-deployed.example/'])
+        self.assertEqual(attempts, ['attempt_1', 'attempt_2']); self.assertEqual(waits, ['15'])
         self.assertEqual(output, ''); self.assertEqual(failure, 1)
 
     def test_actual_composite_refuses_unsafe_or_missing_success_url_without_output_injection(self):

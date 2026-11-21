@@ -95,13 +95,18 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: .site
+          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Wait for the uploaded Pages artifact to be visible
         id: pages_ready
         if: steps.pages_upload.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          PAGES_ARTIFACT_NAME: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          PAGES_ARTIFACT_ID: ${{ steps.pages_upload.outputs.artifact_id }}
         run: python scripts/wait_for_pages_artifact.py
       - name: Deploy Pages website
         id: deployment
         if: steps.pages_ready.outcome == 'success'
         uses: ./.github/actions/publish-pages
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
