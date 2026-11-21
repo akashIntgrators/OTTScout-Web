@@ -28,4 +28,7 @@ for(const bad of ['javascript:alert(1)','https://user:password@example.com']){
 const long=context.correctionIssueURL(title,'Netflix','తెలుగు'.repeat(3000),'x'.repeat(1000));
 assert.ok(long.length<=7500,'A report must fit into the GitHub form URL');
 assert.equal(new URL(long).searchParams.get('title_name'),title.title);
+const fullProblem='Available audio: '+'A'.repeat(1000);
+const complete=new URL(context.correctionIssueURL(title,'Netflix','Context '.repeat(1000),fullProblem));
+assert.equal(complete.searchParams.get('problem'),fullProblem,'Keep the full typed correction when it fits; trim contextual notes first');
 console.log('Structured correction links passed.');

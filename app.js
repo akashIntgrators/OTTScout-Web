@@ -473,7 +473,7 @@ function correctionIssueURL(title, platform, notes, problem) {
       }catch{/* The reporter can supply the exact official title link. */}
     }
   }
-  if(problem)url.searchParams.set('problem',String(problem).slice(0,500));
+  if(problem)url.searchParams.set('problem',String(problem).slice(0,1200));
   if(notes)url.searchParams.set('notes',String(notes).slice(0,1800));
   while(url.href.length>7500&&url.searchParams.get('notes')){
     const text=url.searchParams.get('notes');url.searchParams.set('notes',text.slice(0,Math.floor(text.length/2)));
@@ -492,7 +492,10 @@ function openReport(title) {
   const update=()=>{
     const text=reportText(title,$('#report-category').value,$('#report-platform').value,$('#report-correction').value);
     $('#report-preview').value=text;
-    $('#report-github').href=correctionIssueURL(title,$('#report-platform').value,text,$('#report-category').value+': '+$('#report-correction').value);
+    const problem=$('#report-category').value+': '+$('#report-correction').value;
+    const link=correctionIssueURL(title,$('#report-platform').value,text,problem);
+    $('#report-github').href=link;
+    $('#report-feedback').textContent=new URL(link).searchParams.get('problem')===problem?'':'The link includes a shortened summary. Copy the report to include your full correction.';
   };
   for(const id of ['report-category','report-platform','report-correction'])$('#'+id).oninput=update;
   $('#report-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#report-preview').value);$('#report-feedback').textContent='Report copied.';}catch{$('#report-preview').focus();$('#report-preview').select();$('#report-feedback').textContent='Select and copy the report below.';}};
