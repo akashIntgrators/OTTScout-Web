@@ -162,7 +162,7 @@ jobs:
           if [[ "$OVERLAY_OUTCOME" != 'success' ]]; then args+=(--input-error official_overlay_failed); fi
           if [[ "$ENRICHMENT_OUTCOME" == 'failure' ]]; then args+=(--input-error metadata_enrichment_failed); fi
           if [[ "$CACHED_METADATA_OUTCOME" == 'failure' ]]; then args+=(--input-error cached_metadata_failed); fi
-          python scripts/catalogue_health.py --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --required-source sony-movies --required-source sony-series "${args[@]}"
+          python scripts/catalogue_health.py --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json "${args[@]}"
       - name: Build catalogue and public status
         id: build
         if: steps.snapshot.outcome == 'success' && (steps.checker.outcome == 'success' || steps.recovery.outcome == 'success') && (steps.enrichment.outcome == 'success' || steps.cached_metadata.outcome == 'success') && steps.overlay.outcome == 'success' && steps.health.outcome == 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
@@ -193,7 +193,7 @@ jobs:
       - name: Keep failed publication from closing an incident
         id: publication_guard
         if: always() && steps.health.outcome == 'success' && steps.deployment.outcome != 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
-        run: python scripts/catalogue_health.py --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --required-source sony-movies --required-source sony-series --input-error website_publication_failed
+        run: python scripts/catalogue_health.py --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --input-error website_publication_failed
       - name: Open or update the freshness incident
         if: always() && steps.health.outcome == 'success' && (steps.deployment.outcome == 'success' || steps.publication_guard.outcome == 'success') && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
         run: python scripts/notify_catalogue_health.py --repo "$ALERT_REPO" --mention "$ALERT_OWNER" --workflow-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

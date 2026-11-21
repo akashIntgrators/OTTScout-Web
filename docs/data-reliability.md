@@ -1,6 +1,6 @@
 # Catalogue reliability
 
-New releases take priority over maintenance and older imports. The collector keeps local hard limits of **400 Streaming Availability attempts per UTC month and 12 per run**, counts attempts before I/O, and retains failures in its ledger. These guards do not establish the provider account's terms, guarantee free capacity or count other consumers of the same API key. No additional availability-provider subscription is introduced. TMDB watch-provider fallback remains deferred pending licensing.
+A due newest-first page of the last 48 hours runs before chronological catch-up, maintenance and older imports. This has its own durable attempt slot, shares the same request ledger, and never advances the complete-feed watermark. `hasMore` remains an explicit coverage gap. Later newest-first slots today are reserved before catch-up can spend spare requests. The collector keeps local hard limits of **400 Streaming Availability attempts per UTC month and 12 per run**, counts attempts before I/O, and retains failures in its ledger. These guards do not establish the provider account's terms, guarantee free capacity or count other consumers of the same API key. No additional availability-provider subscription is introduced. TMDB watch-provider fallback remains deferred pending licensing.
 
 ## Publish valid new data without waiting for a whole query
 
@@ -18,7 +18,7 @@ During conservation or active NEW pagination, maintenance, historical imports an
 
 ## Two bounded fallback paths
 
-Reviewed exact-ID entries and automatic SonyLIV checks are merged through the [official-listing policy](official-listings.md). The automatic adapter checks India region, exact movie/series identity, digital-release evidence, full content and subscription entitlement under bounded public-request/time limits. Coming-soon/date/access conflicts fail closed. Unknown audio stays empty. Netflix automatic discovery respects its robots block; reviewed Netflix records remain available until their evidence expires. Neither path fabricates playback verification or complete platform coverage.
+Reviewed exact-ID entries follow the [official-listing policy](official-listings.md). SonyLIV website collection is paused pending permission, with zero Sony requests and no renewal of cached automatic evidence. Provider SonyLIV offers remain separate. Netflix automatic discovery respects its robots block. The [corrections inbox](catalogue-corrections.md) accepts reports for manual review; only a separately validated maintainer registry change can become a public correction. Unknown audio stays empty, and no report alone establishes India playback or complete coverage.
 
 Optional `data/title-rechecks.json` provider lookups support legacy Netflix movies and exact JioHotstar movies/series. When normal capacity is available, unresolved reports get at most one lookup per UTC day across all reports; resolved reports stop repeating. Results must match the exact platform ID and content type. Name similarity is insufficient. Audio and weekly dates come from provider evidence. Conservation or a pending NEW query defers these paid-endpoint lookups entirely.
 

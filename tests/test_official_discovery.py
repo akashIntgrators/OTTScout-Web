@@ -16,8 +16,10 @@ NOW=int(datetime(2026,11,20,19,tzinfo=timezone.utc).timestamp())
 FAQ_HTML='<p>Sony LIV has following subscription offering in India</p><p>LIV Premium</p><p>Sony SET and SAB shows at same time as TV</p><p>Blockbuster Indian Movies</p>'
 SONY_ROBOTS='User-agent: *\nDisallow: /search/*\nDisallow: /api/*\nDisallow: /DETAIL/*\n'
 NETFLIX_ROBOTS='User-agent: *\nDisallow: /\nUser-agent: ChatGPT-User\nAllow: /\n'
-SERIES_SOURCE=next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-series')
-MOVIE_SOURCE=next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-movies')
+# Explicit enabled inputs exercise recorded parser fixtures only. The CLI
+# accepts exact reviewed production configurations, which keep Sony paused.
+SERIES_SOURCE={**next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-series'),'enabled':True}
+MOVIE_SOURCE={**next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-movies'),'enabled':True}
 NETFLIX_SOURCE=next(x for x in d.DEFAULT_SOURCES if x['id']=='netflix-tudum')
 
 
@@ -58,6 +60,91 @@ def mutate_html(key,callback):
 
 
 class OfficialDiscoveryTests(unittest.TestCase):
+    def test_production_defaults_and_reviewed_file_pause_sony_before_even_robots(self):
+        self.assertEqual(json.loads((d.ROOT/'data/official-sources.json').read_text()),d.DEFAULT_SOURCES)
+        with tempfile.TemporaryDirectory() as folder:
+            transport=Transport()
+            client=d.PublicClient(Path(folder)/'http',NOW,transport=transport)
+            records,report=d.discover(folder,NOW,client=client)
+            self.assertEqual(records,[])
+            self.assertEqual([url for url,_ in transport.calls],['https://www.netflix.com/robots.txt'])
+            paused=[source for source in report['sources'] if source['platform']=='SonyLIV']
+            self.assertEqual(len(paused),2)
+            for source in paused:
+                self.assertEqual(source['status'],'paused')
+                self.assertEqual(source['pauseReason'],'permission-required')
+                self.assertFalse(source['required'])
+                self.assertEqual(source['attempted'],0)
+                self.assertIsNone(source['lastAttemptAt'])
+                self.assertIsNone(source['lastSuccessAt'])
+            self.assertEqual(next(source for source in report['sources'] if source['platform']=='Netflix')['status'],'blocked')
+
+    def test_paused_sources_quarantine_cached_auto_proof_without_touching_reviewed_or_provider_data(self):
+        with tempfile.TemporaryDirectory() as folder:
+            first,_=run(folder,Transport(publishable=True),sources=[MOVIE_SOURCE,SERIES_SOURCE])
+            self.assertEqual(len(first),2)
+            before=json.loads((Path(folder)/'state.json').read_text())
+            reviewed=Path(folder)/'data/official-listings.json';reviewed.parent.mkdir()
+            reviewed.write_text(json.dumps(first));reviewed_bytes=reviewed.read_bytes()
+            catalogue={'titles':[{'id':'motn:123','offers':[{'platform':'SonyLIV','link':SERIES_SOURCE['url']}]}]}
+            original_catalogue=copy.deepcopy(catalogue)
+            paused_sources=[source for source in d.DEFAULT_SOURCES if source['platform']=='SonyLIV']
+            transport=Transport(publishable=True)
+            records,report=run(folder,transport,NOW+3600,sources=paused_sources,catalog=catalogue)
+            self.assertEqual(transport.calls,[])
+            self.assertEqual(report['publicRequests'],0)
+            self.assertEqual(records,[])
+            self.assertEqual(report['expectedVerifiedRecent'],[])
+            self.assertEqual({item['id'] for item in report['quarantinedRecords']},{item['id'] for item in first})
+            self.assertTrue(all(item['reason']=='permission-required' for item in report['quarantinedRecords']))
+            after=json.loads((Path(folder)/'state.json').read_text())
+            self.assertEqual(before['records'],after['records'])
+            self.assertEqual(before['attempts'],after['attempts'])
+            for source in report['sources']:
+                self.assertEqual(source['lastSuccessAt'],before['sources'][source['id']]['lastSuccessAt'])
+                self.assertEqual(source['lastAttemptAt'],before['sources'][source['id']]['lastAttemptAt'])
+            self.assertEqual(reviewed.read_bytes(),reviewed_bytes)
+            self.assertEqual(catalogue,original_catalogue)
+
+    def test_selecting_only_netflix_does_not_republish_paused_sony_cache(self):
+        with tempfile.TemporaryDirectory() as folder:
+            first,_=run(folder,Transport(publishable=True))
+            self.assertEqual(len(first),1)
+            records,report=run(folder,Transport(),NOW+3600,sources=[NETFLIX_SOURCE])
+            self.assertEqual(records,[])
+            self.assertEqual(report['quarantinedRecords'][0]['id'],first[0]['id'])
+            self.assertEqual(report['quarantinedRecords'][0]['verifiedAt'],NOW)
+            self.assertEqual(report['quarantinedRecords'][0]['expiresAt'],NOW+30*d.DAY)
+
+    def test_cli_rejects_reenabled_and_legacy_source_configs_before_http(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config=Path(folder)/'sources.json'
+            reenabled=copy.deepcopy(d.DEFAULT_SOURCES)
+            reenabled[0]['enabled']=True
+            legacy=copy.deepcopy(d.DEFAULT_SOURCES)
+            for source in legacy:
+                source.pop('enabled',None);source.pop('pauseReason',None)
+            for sources in (reenabled,legacy):
+                config.write_text(json.dumps(sources))
+                with self.subTest(sources=sources),patch('sys.argv',['official_discovery.py','--sources',str(config)]),patch.object(d,'PublicClient') as client:
+                    with self.assertRaises(d.DiscoveryError):d.main()
+                    client.assert_not_called()
+
+    def test_cli_missing_source_file_uses_paused_defaults_without_sony_requests(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory=Path(folder);transport=Transport();client_class=d.PublicClient
+            def client_factory(path,now,**options):
+                return client_class(path,now,transport=transport,**options)
+            arguments=['official_discovery.py','--cache-dir',str(directory/'cache'),
+                       '--sources',str(directory/'missing-sources.json'),'--output',str(directory/'automatic.json'),
+                       '--report',str(directory/'report.json'),'--now',str(NOW)]
+            with patch('sys.argv',arguments),patch.object(d,'PublicClient',side_effect=client_factory),patch('builtins.print'):
+                d.main()
+            self.assertEqual(json.loads((directory/'automatic.json').read_text()),[])
+            self.assertEqual([url for url,_ in transport.calls],['https://www.netflix.com/robots.txt'])
+            report=json.loads((directory/'report.json').read_text())
+            self.assertEqual(len([s for s in report['sources'] if s['status']=='paused']),2)
+
     def test_recorded_series_structure_requires_full_episode_flag_to_clear_before_acceptance(self):
         c=d.parse_sony_index(FIXTURES['series-index']['html'],SERIES_SOURCE['url'],'Series')[0]
         with self.assertRaisesRegex(d.DiscoveryError,'coming soon'):

@@ -1,6 +1,6 @@
 # Official OTT listing fallback
 
-`data/official-listings.json` holds reviewed entries for gaps in the streaming API. `official_discovery.py` can also produce bounded, verified SonyLIV records in `data/official-discovered.json`; `official_registry.py` merges them before the local overlay applies. Neither route introduces a paid availability API or extra Streaming Availability/TMDB request. Website-only publication uses existing evidence without re-running discovery or renewing its review times. No general scraper or social-post ingestion is enabled.
+`data/official-listings.json` holds reviewed entries for gaps in the streaming API. `official_discovery.py` contains bounded SonyLIV verification, but automatic Sony collection is paused pending permission. `official_registry.py` merges permitted automatic records from `data/official-discovered.json` before the local overlay applies. Neither route introduces a paid availability API or extra Streaming Availability/TMDB request. Website-only publication uses existing evidence without re-running discovery or renewing its review times. No general scraper or social-post ingestion is enabled.
 
 ## Evidence and publication
 
@@ -23,13 +23,21 @@ A newer explicit show/platform removal recorded by the provider suppresses older
 
 ## Supported automatic discovery
 
+### Sony permission pause
+
+Sony movie and series sources are explicitly `enabled: false` with `pauseReason: "permission-required"` in both the reviewed source file and built-in defaults. SonyLIV's [terms of use](https://www.sonyliv.com/terms-of-use), including section 5.5.5, restrict extraction for third-party websites and applications. A different country of execution or an allowed robots path does not establish permission. Re-enabling requires an explicit reviewed code/configuration change after permission has been confirmed; there is no environment switch, and the production CLI rejects unreviewed enabled configurations.
+
+Paused sources make **zero public requests, including robots checks**, even if an earlier run saved HTTP documents. They report `status: "paused"`, `required: false`, `pauseReason: "permission-required"` and zero attempted checks. Their previous `lastAttemptAt` and `lastSuccessAt` stay unchanged. The report's evaluation time records when this pause was observed, not a successful availability scan.
+
+Any automatic Sony records retained in private discovery state are quarantined: they are omitted from `data/official-discovered.json` and `expectedVerifiedRecent`, listed in `quarantinedRecords`, and retain their original review and expiry dates. Selecting only a different source cannot republish them. The pause does not edit the separate curated registry, API offers or their dates. Existing parser tests use explicitly enabled recorded fixtures without making network requests; they do not enable production collection.
+
 The reviewed source list contains SonyLIV movie/series indexes and a Netflix Tudum lead. The workflow allows at most **12 public requests and 120 seconds** for discovery, with robots checks, cached HTTP responses, response/byte/time bounds, candidate rotation and bounded verification per source. These public requests are separate from the streaming-provider ledger. The adapter inspects only supported exact-title evidence; it does not claim every platform release is covered.
 
 Sony verification requires an exact full movie or series ID and type, explicit India region/contract availability, a recent digital-release date and subscription entitlement. Movie bundles must resolve to a unique full base asset with matching identity and release-announcement evidence. Series require exact parent/first-full-episode evidence. Explicit `comingSoon` conflicts, mismatched dates, ambiguous playable identity, unknown access or unknown region leave candidates unverified and add no fallback offer. Trailer language is not copied as playable audio; only explicit matching track evidence is used. Public metadata still does not constitute an authenticated India playback test.
 
 A confirmed record receives its actual successful review time and expiry no more than 30 days later. Reverification can renew it only after the same strict checks pass again. Robots blocks, network failures, partial scans, generic HTTP 200 responses or contradictory flags cannot extend evidence. Cached valid records may survive a failed scan only until their existing expiry; they are never silently relabelled as freshly verified.
 
-Netflix automatic discovery remains disabled when robots policy blocks the bot; the implementation also requires an enabled, verified region-aware parser before importing Netflix candidates. Reviewed Netflix entries can still be maintained through exact first-party evidence. Prime Video, JioHotstar, ZEE5, Sun NXT and aha have no automatic adapter here; existing manually reviewed registry support is distinct from automatic coverage. The source report records required Sony checks, optional blocked Netflix, unverified candidates and reasons. Independent monitoring reuses those observations without changing their dates.
+Netflix automatic discovery remains disabled when robots policy blocks the bot; the implementation also requires an enabled, verified region-aware parser before importing Netflix candidates. Reviewed Netflix entries can still be maintained through exact first-party evidence. Prime Video, JioHotstar, ZEE5, Sun NXT and aha have no automatic adapter here; existing manually reviewed registry support is distinct from automatic coverage. The source report records paused non-required Sony sources, optional blocked Netflix, unverified candidates and reasons. Independent monitoring reuses those observations without changing their dates.
 
 ## Identity and source integrity
 

@@ -1,0 +1,31 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const code=fs.readFileSync('app.js','utf8');
+const actual=code.slice(code.indexOf('function correctionIssueURL('),code.indexOf('function openReport('));
+const context=vm.createContext({URL,platforms:['Netflix','Prime Video','Sun NXT','JioHotstar','ZEE5','aha','SonyLIV']});
+vm.runInContext(actual,context);
+const title={title:'A & <movie> తెలుగు',type:'Movie',offers:[{platform:'Netflix',link:'https://www.netflix.com/in/title/123'}]};
+const link=new URL(context.correctionIssueURL(title,'Netflix','Catalogue: motn:42','Wrong audio & source'));
+assert.equal(link.origin,'https://github.com');
+assert.equal(link.pathname,'/akashIntgrators/OTTScout-Web/issues/new');
+assert.equal(link.searchParams.get('template'),'catalogue-correction.yml');
+assert.equal(link.searchParams.get('title_name'),title.title);
+assert.equal(link.searchParams.get('title_type'),'Movie');
+assert.equal(link.searchParams.get('platform'),'Netflix');
+assert.equal(link.searchParams.get('official_url'),title.offers[0].link);
+assert.equal(link.searchParams.get('notes'),'Catalogue: motn:42');
+assert.equal(link.searchParams.get('problem'),'Wrong audio & source');
+assert.equal(link.searchParams.has('body'),false,'Reports must use the structured review form');
+const multiple={...title,offers:[...title.offers,{platform:'SonyLIV',link:'https://www.sonyliv.com/shows/title-123'}]};
+const ambiguous=new URL(context.correctionIssueURL(multiple,'All listed platforms','',null));
+assert.equal(ambiguous.searchParams.has('platform'),false);
+assert.equal(ambiguous.searchParams.has('official_url'),false);
+for(const bad of ['javascript:alert(1)','https://user:password@example.com']){
+  const unsafe=new URL(context.correctionIssueURL({...title,offers:[{platform:'Netflix',link:bad}]},'Netflix','',null));
+  assert.equal(unsafe.searchParams.has('official_url'),false);
+}
+const long=context.correctionIssueURL(title,'Netflix','తెలుగు'.repeat(3000),'x'.repeat(1000));
+assert.ok(long.length<=7500,'A report must fit into the GitHub form URL');
+assert.equal(new URL(long).searchParams.get('title_name'),title.title);
+console.log('Structured correction links passed.');

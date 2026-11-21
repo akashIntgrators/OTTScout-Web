@@ -31,6 +31,15 @@ def build_summary(report):
         lines += ['', '**Collection is limited. A successful website deployment may contain cached or partially updated data; it does not mean every feed is current.**',
                   f"- Collector detail: {latest.get('message', 'See request budget and feed progress below.')}"]
 
+    latest_check = report.get('latestNewCheck')
+    if isinstance(latest_check, dict):
+        lines += ['', '### Newest-first page', '',
+                  f"- Checked: {latest_check.get('checkedAt', 'not recorded')}",
+                  f"- Window: {latest_check.get('from', 'unknown')} to {latest_check.get('to', 'unknown')}",
+                  f"- Changes on this page: {latest_check.get('events', 'unknown')}",
+                  f"- More matching changes: {latest_check.get('hasMore', 'unknown')}",
+                  '- This recent-page observation does not advance the complete chronological watermark.']
+
     budget = report.get('requestBudget')
     if isinstance(budget, dict):
         value = lambda key: budget.get(key, 'not recorded')
