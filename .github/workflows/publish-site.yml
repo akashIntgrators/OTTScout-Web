@@ -104,4 +104,4 @@ jobs:
       - name: Deploy Pages website
         id: deployment
         if: steps.pages_ready.outcome == 'success'
-        uses: actions/deploy-pages@v4
+        uses: ./.github/actions/publish-pages

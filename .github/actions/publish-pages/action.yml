@@ -1,0 +1,68 @@
+name: Publish GitHub Pages with bounded retries
+description: Retry the official deployment action when Pages has not observed its uploaded artifact yet.
+outputs:
+  page_url:
+    description: URL returned by the first successful official deployment attempt.
+    value: ${{ steps.result.outputs.page_url }}
+runs:
+  using: composite
+  steps:
+    - id: attempt_1
+      uses: actions/deploy-pages@v5.0.1
+      continue-on-error: true
+      with:
+        timeout: '120000'
+    - id: pause_1
+      if: steps.attempt_1.outcome == 'failure'
+      shell: bash
+      run: sleep 15
+    - id: attempt_2
+      if: steps.attempt_1.outcome == 'failure'
+      uses: actions/deploy-pages@v5.0.1
+      continue-on-error: true
+      with:
+        timeout: '120000'
+    - id: pause_2
+      if: steps.attempt_2.outcome == 'failure'
+      shell: bash
+      run: sleep 30
+    - id: attempt_3
+      if: steps.attempt_2.outcome == 'failure'
+      uses: actions/deploy-pages@v5.0.1
+      continue-on-error: true
+      with:
+        timeout: '120000'
+    - id: result
+      if: always()
+      shell: bash
+      env:
+        FIRST_OUTCOME: ${{ steps.attempt_1.outcome }}
+        FIRST_URL: ${{ steps.attempt_1.outputs.page_url }}
+        SECOND_OUTCOME: ${{ steps.attempt_2.outcome }}
+        SECOND_URL: ${{ steps.attempt_2.outputs.page_url }}
+        THIRD_OUTCOME: ${{ steps.attempt_3.outcome }}
+        THIRD_URL: ${{ steps.attempt_3.outputs.page_url }}
+      run: |
+        if [[ "$FIRST_OUTCOME" == 'success' ]]; then
+          page_url="$FIRST_URL"
+        elif [[ "$SECOND_OUTCOME" == 'success' ]]; then
+          page_url="$SECOND_URL"
+        elif [[ "$THIRD_OUTCOME" == 'success' ]]; then
+          page_url="$THIRD_URL"
+        else
+          echo '::error::GitHub Pages publication failed after the bounded deployment attempts.' >&2
+          exit 1
+        fi
+        export OTTSCOUT_PAGE_URL="$page_url"
+        python - <<'PYCODE'
+        import os
+        from urllib.parse import urlsplit
+        value = os.environ['OTTSCOUT_PAGE_URL']
+        url = urlsplit(value)
+        if (len(value) > 8192 or any(c.isspace() or ord(c) < 32 for c in value)
+                or url.scheme != 'https' or not url.hostname or url.username or url.password
+                or url.port not in (None, 443)):
+            raise SystemExit('A successful deployment did not provide a safe Pages URL.')
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as target:
+            target.write('page_url=' + value + '\n')
+        PYCODE
