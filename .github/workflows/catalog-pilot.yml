@@ -41,6 +41,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   sync:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -129,7 +130,28 @@ jobs:
         id: discovery
         if: always()
         continue-on-error: true
-        run: python scripts/official_discovery.py --catalog data/catalog.json --cache-dir .state/official-discovery --output data/official-discovered.json --report reports/official-discovery.json --max-requests 12 --max-seconds 120
+        env:
+          SONY_RELAY_ENABLED: ${{ vars.SONY_RELAY_ENABLED }}
+          SONY_RELAY_HOST: ${{ secrets.SONY_RELAY_HOST }}
+          SONY_RELAY_PRIVATE_KEY: ${{ secrets.SONY_RELAY_PRIVATE_KEY }}
+          SONY_RELAY_KNOWN_HOSTS: ${{ secrets.SONY_RELAY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$SONY_RELAY_ENABLED" == 'true' ]]; then
+            if [[ -z "$SONY_RELAY_HOST" || -z "$SONY_RELAY_PRIVATE_KEY" || -z "$SONY_RELAY_KNOWN_HOSTS" ]]; then
+              echo 'Sony India relay is enabled but is not fully configured.' >&2
+              exit 1
+            fi
+            umask 077
+            relay_dir="$(mktemp -d "$RUNNER_TEMP/sony-relay.XXXXXXXX")"
+            trap 'rm -rf -- "$relay_dir"' EXIT
+            printf '%s\n' "$SONY_RELAY_PRIVATE_KEY" > "$relay_dir/identity"
+            printf '%s\n' "$SONY_RELAY_KNOWN_HOSTS" > "$relay_dir/known_hosts"
+            unset SONY_RELAY_PRIVATE_KEY SONY_RELAY_KNOWN_HOSTS
+            args+=(--sony-ssh-host "$SONY_RELAY_HOST" --sony-ssh-identity "$relay_dir/identity" --sony-ssh-known-hosts "$relay_dir/known_hosts")
+          fi
+          python scripts/official_discovery.py --catalog data/catalog.json --cache-dir .state/official-discovery --output data/official-discovered.json --report reports/official-discovery.json --max-requests 12 --max-seconds 120 "${args[@]}"
       - name: Apply verified official gaps without movie API calls
         id: overlay
         if: always()

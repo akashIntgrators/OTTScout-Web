@@ -95,6 +95,20 @@ class OfficialDiscoveryTests(unittest.TestCase):
             with self.assertRaises(d.DiscoveryError):d.verify_sony(mutate_html('series',change),c,NOW,FAQ_HTML,FIXTURES['episode']['html'])
         with self.assertRaises(d.DiscoveryError):d.verify_sony(FIXTURES['series']['html'],c,NOW,FAQ_HTML)
 
+    def test_region_diagnostics_keep_india_gate_and_reject_missing_or_hostile_values(self):
+        # Region failures remain failures: a locale preference, arbitrary page
+        # text, or a malformed country object is not evidence of India.
+        for region in ('United States', 'india', 'India '):
+            html=mutate_html('movie-index',lambda state:state['country']['resultObj'].update(country=region))
+            with self.assertRaises(d.DiscoveryError) as caught:d.sony_state(html)
+            self.assertEqual(caught.exception.code,'region-unverified')
+            self.assertEqual(str(caught.exception),'Sony region is not an exact India match')
+        for value in (None, [], {'resultObj':None}, {'resultObj':{'country':'<India>'}}):
+            html=mutate_html('movie-index',lambda state:state.update(country=value))
+            with self.assertRaises(d.DiscoveryError) as caught:d.sony_state(html)
+            self.assertEqual(caught.exception.code,'region-unverified')
+            self.assertEqual(str(caught.exception),'Sony did not provide a usable region')
+
     def test_unknown_audio_stays_empty_and_does_not_infer_original(self):
         c=d.parse_sony_index(FIXTURES['series-index']['html'],SERIES_SOURCE['url'],'Series')[0]
         html=mutate_html('series',lambda s:s['pageDetails']['showDetails']['resultObj']['containers'][0]['metadata']['emfAttributes'].pop('audio_language_list'))

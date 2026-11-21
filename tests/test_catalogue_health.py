@@ -57,6 +57,27 @@ class CatalogueHealthTests(unittest.TestCase):
         self.assertFalse(result['coverage']['backfillComplete'])
         self.assertEqual(result['coverage']['unsupported'], ['Sun NXT', 'aha'])
 
+    def test_sony_region_diagnostics_survive_redaction_without_copying_raw_source_data(self):
+        for message, expected in [('Sony region is not an exact India match','not-exact-india'),
+                                  ('Sony did not provide a usable region','missing-or-malformed')]:
+            values=fixtures(); source=values[2]['sources'][0]
+            source.update(status='error',lastSuccessAt=None,errors=[{'code':'region-unverified','message':message}])
+            first,_=self.evaluate(values)
+            self.assertEqual(first['status'],'critical')
+            self.assertEqual(first['officialDiscovery']['sources'][0]['regionEvidence'],expected)
+            self.assertEqual(signals(first)['official_source_unknown:sony-movies'],'critical')
+            cause=next(c for c in first['causes'] if c['code']=='official_source_unknown:sony-movies')
+            self.assertEqual(cause['details']['regionEvidence'],expected)
+            self.assertEqual(cause['message'],'Sony region did not meet the exact India verification check.')
+            second,_=health.evaluate_health(values[0],values[1],health.discovery_from_health(first),now=NOW+60)
+            self.assertEqual(second['officialDiscovery']['sources'][0]['regionEvidence'],expected)
+            self.assertEqual(signals(second)['official_source_unknown:sony-movies'],'critical')
+        values=fixtures(); values[2]['sources'][0].update(status='error',lastSuccessAt=None,
+            errors=[{'code':'region-unverified','message':'@everyone SECRET arbitrary provider text'}])
+        result,_=self.evaluate(values)
+        self.assertNotIn('regionEvidence',result['officialDiscovery']['sources'][0])
+        self.assertNotIn('SECRET',json.dumps(result))
+
     def test_completion_age_boundaries_not_latest_attempt_or_title_dates_decide_freshness(self):
         for age, severity in [(12 * HOUR, None), (12 * HOUR + 1, 'warning'), (24 * HOUR, 'warning'), (24 * HOUR + 1, 'critical')]:
             report, cat, discovery = fixtures()

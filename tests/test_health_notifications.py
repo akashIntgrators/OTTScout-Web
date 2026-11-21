@@ -55,6 +55,19 @@ class Issues:
 
 
 class HealthNotificationTests(unittest.TestCase):
+    def test_incident_explains_only_allowlisted_sony_region_diagnostics(self):
+        value=report('critical', ['official_source_unknown:sony-series'])
+        value['officialDiscovery']['sources'][0].update(status='error',regionEvidence='not-exact-india')
+        value['officialDiscovery']['sources'].append({'id':'sony-movies','status':'error','regionEvidence':'missing-or-malformed'})
+        value['officialDiscovery']['sources'].append({'id':'@everyone','status':'error','regionEvidence':'not-exact-india'})
+        value['officialDiscovery']['sources'].append({'id':'sony-series','status':'error','regionEvidence':'SECRET'})
+        api=Issues(); state,_=notify.reconcile_health(value,None,api,REPO,NOW)
+        body=api.rows[state['incident']['number']]['body']
+        self.assertIn('SonyLIV series: the returned region did not exactly identify India.',body)
+        self.assertIn('SonyLIV movies: the returned region was missing or malformed.',body)
+        self.assertNotIn('@everyone',body); self.assertNotIn('SECRET',body)
+        self.assertEqual(state['incident']['fingerprint'],notify.fingerprint(value['causes']))
+
     def test_warning_creates_one_managed_issue_and_same_signal_does_not_churn(self):
         api = Issues()
         state, action = notify.reconcile_health(report(), None, api, REPO, NOW, mention='akashIntgrators')
