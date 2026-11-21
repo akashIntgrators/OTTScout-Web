@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -90,9 +91,17 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages website
+        id: pages_upload
         uses: actions/upload-pages-artifact@v3
         with:
           path: .site
+      - name: Wait for the uploaded Pages artifact to be visible
+        id: pages_ready
+        if: steps.pages_upload.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/wait_for_pages_artifact.py
       - name: Deploy Pages website
         id: deployment
+        if: steps.pages_ready.outcome == 'success'
         uses: actions/deploy-pages@v4

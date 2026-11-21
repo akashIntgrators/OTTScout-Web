@@ -171,12 +171,17 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/configure-pages@v5
       - name: Upload Pages website
+        id: pages_upload
         if: steps.build.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with: {path: .site}
+      - name: Wait for the uploaded Pages artifact to be visible
+        id: pages_ready
+        if: steps.pages_upload.outcome == 'success'
+        run: python scripts/wait_for_pages_artifact.py
       - name: Deploy catalogue and status
         id: deployment
-        if: steps.build.outcome == 'success'
+        if: steps.build.outcome == 'success' && steps.pages_ready.outcome == 'success'
         uses: actions/deploy-pages@v4
       - name: Keep failed publication from closing an incident
         id: publication_guard
