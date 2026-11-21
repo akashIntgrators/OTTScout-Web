@@ -73,12 +73,17 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/configure-pages@v5
       - name: Upload monitored website
+        id: pages_upload
         if: steps.build.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with: {path: .site}
+      - name: Wait for the uploaded Pages artifact to be visible
+        id: pages_ready
+        if: steps.pages_upload.outcome == 'success'
+        run: python scripts/wait_for_pages_artifact.py
       - name: Publish status without movie API requests
         id: deployment
-        if: steps.build.outcome == 'success'
+        if: steps.build.outcome == 'success' && steps.pages_ready.outcome == 'success'
         uses: actions/deploy-pages@v4
       - name: Preserve an incident if status publication failed
         id: publication_guard

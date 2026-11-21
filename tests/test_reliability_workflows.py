@@ -172,7 +172,8 @@ class ReliabilityWorkflowTests(unittest.TestCase):
                 self.assertNotRegex(commands, r'\bpython(?:3)?\s+scripts/(?:catalog_sync|tmdb_enrich|official_discovery)\.py\b')
                 self.assertNotRegex(text, r'STREAMING_API_KEY|TMDB_READ_ACCESS_TOKEN|X-API-Key|streaming-availability\.p\.rapidapi|api\.movieofthenight')
                 allowed = {'-', 'scripts/fetch_public_catalogue.py', 'scripts/build_site.py',
-                           'scripts/catalogue_health.py', 'scripts/notify_catalogue_health.py'}
+                           'scripts/catalogue_health.py', 'scripts/notify_catalogue_health.py',
+                           'scripts/wait_for_pages_artifact.py'}
                 for line in commands.splitlines():
                     match = re.match(r'\s*python(?:3)?\s+(\S+)', line)
                     if match:
@@ -193,6 +194,56 @@ class ReliabilityWorkflowTests(unittest.TestCase):
             self.assertIsNotNone(group); groups.append(group[1])
             self.assertRegex(block[1], r'(?m)^  cancel-in-progress: false$')
         self.assertEqual(groups, ['ottscout-catalog-pilot'] * 3)
+
+    def test_all_pages_deployments_wait_for_the_exact_uploaded_artifact_before_deploying(self):
+        for name, text in [('collector', self.collector), ('watchdog', self.watchdog), ('publisher', self.publisher)]:
+            with self.subTest(workflow=name):
+                ordered = steps(text)
+                upload = step_with_id(text, 'pages_upload'); ready = step_with_id(text, 'pages_ready')
+                deploy = step_with_id(text, 'deployment')
+                self.assertIn('uses: actions/upload-pages-artifact@v3', upload)
+                self.assertLess(ordered.index(upload), ordered.index(ready)); self.assertLess(ordered.index(ready), ordered.index(deploy))
+                self.assertTrue(condition(ready, {'steps.pages_upload.outcome': 'success'}))
+                self.assertFalse(condition(ready, {'steps.pages_upload.outcome': 'failure'}))
+                self.assertTrue(condition(deploy, {'steps.build.outcome': 'success', 'steps.pages_ready.outcome': 'success'}))
+                for outcome in ('failure', 'skipped', 'cancelled'):
+                    self.assertFalse(condition(deploy, {'steps.build.outcome': 'success', 'steps.pages_ready.outcome': outcome}))
+                self.assertEqual(script(ready).strip(), 'python scripts/wait_for_pages_artifact.py')
+                with tempfile.TemporaryDirectory() as folder:
+                    root = Path(folder); log = root / 'argv.jsonl'
+                    self.run_script(script(ready), root, {'ARGV_LOG': str(log), 'GITHUB_REPOSITORY': 'owner/repo',
+                                                         'GITHUB_RUN_ID': '123'}, record=True)
+                    self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], [['scripts/wait_for_pages_artifact.py']])
+
+    def test_artifact_readiness_failure_preserves_publication_incident_and_progress_caches(self):
+        for name, text in [('collector', self.collector), ('watchdog', self.watchdog)]:
+            with self.subTest(workflow=name):
+                guard = step_with_id(text, 'publication_guard')
+                notify = next(step for step in steps(text) if 'scripts/notify_catalogue_health.py' in script(step))
+                values = {'steps.health.outcome': 'success', 'steps.pages_ready.outcome': 'failure',
+                          'steps.deployment.outcome': 'skipped', 'steps.publication_guard.outcome': 'success',
+                          'inputs.publish': True, 'vars.PUBLISH_CATALOG': 'false'}
+                self.assertTrue(condition(guard, values))
+                self.assertTrue(condition(notify, values))
+                self.assertFalse(condition(notify, {**values, 'steps.publication_guard.outcome': 'failure'}))
+                with tempfile.TemporaryDirectory() as folder:
+                    root = Path(folder); log = root / 'argv.jsonl'
+                    self.run_script(script(guard), root, {'ARGV_LOG': str(log)}, record=True)
+                    self.assertEqual(json.loads(log.read_text().splitlines()[0])[-2:], ['--input-error', 'website_publication_failed'])
+                save = next(step for step in steps(text) if 'uses: actions/cache/save@' in step)
+                self.assertTrue(condition(save, {'steps.ledger.outputs.valid': 'true'}), 'Publication readiness failure must not discard validated collection progress')
+
+    def test_readiness_helper_has_readonly_actions_permission_and_publisher_scopes_its_token(self):
+        for text in (self.collector, self.watchdog, self.publisher):
+            permissions = re.search(r'^permissions:\n((?:  [^\n]*\n|\n)+)', text, re.MULTILINE)
+            self.assertIsNotNone(permissions)
+            self.assertRegex(permissions[1], r'(?m)^  actions: read$')
+            self.assertNotRegex(permissions[1], r'(?m)^  actions: write$')
+        publisher_ready = step_with_id(self.publisher, 'pages_ready')
+        self.assertRegex(publisher_ready, r'(?m)^          GH_TOKEN: \$\{\{ github\.token \}\}$')
+        for step in steps(self.publisher):
+            if field(step, 'id') != 'pages_ready':
+                self.assertNotIn('GH_TOKEN:', step)
 
     def test_incident_reconciliation_follows_failed_publication_guard_in_both_workflows(self):
         for name, text in [('collector', self.collector), ('watchdog', self.watchdog)]:
