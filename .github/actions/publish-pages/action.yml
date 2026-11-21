@@ -1,5 +1,9 @@
 name: Publish GitHub Pages with bounded retries
 description: Retry the official deployment action when Pages has not observed its uploaded artifact yet.
+inputs:
+  artifact_name:
+    description: Unique artifact name for this workflow run attempt
+    required: true
 outputs:
   page_url:
     description: URL returned by the first successful official deployment attempt.
@@ -12,26 +16,29 @@ runs:
       continue-on-error: true
       with:
         timeout: '120000'
+        artifact_name: ${{ inputs.artifact_name }}
     - id: pause_1
-      if: steps.attempt_1.outcome == 'failure'
+      if: steps.attempt_1.outcome == 'failure' && steps.attempt_1.outputs.page_url == ''
       shell: bash
       run: sleep 15
     - id: attempt_2
-      if: steps.attempt_1.outcome == 'failure'
+      if: steps.attempt_1.outcome == 'failure' && steps.attempt_1.outputs.page_url == ''
       uses: actions/deploy-pages@v5.0.1
       continue-on-error: true
       with:
         timeout: '120000'
+        artifact_name: ${{ inputs.artifact_name }}
     - id: pause_2
-      if: steps.attempt_2.outcome == 'failure'
+      if: steps.attempt_2.outcome == 'failure' && steps.attempt_2.outputs.page_url == ''
       shell: bash
       run: sleep 30
     - id: attempt_3
-      if: steps.attempt_2.outcome == 'failure'
+      if: steps.attempt_2.outcome == 'failure' && steps.attempt_2.outputs.page_url == ''
       uses: actions/deploy-pages@v5.0.1
       continue-on-error: true
       with:
         timeout: '120000'
+        artifact_name: ${{ inputs.artifact_name }}
     - id: result
       if: always()
       shell: bash
@@ -50,7 +57,7 @@ runs:
         elif [[ "$THIRD_OUTCOME" == 'success' ]]; then
           page_url="$THIRD_URL"
         else
-          echo '::error::GitHub Pages publication failed after the bounded deployment attempts.' >&2
+          echo '::error::GitHub Pages publication could not be confirmed; see the attempt logs.' >&2
           exit 1
         fi
         export OTTSCOUT_PAGE_URL="$page_url"

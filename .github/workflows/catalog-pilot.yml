@@ -174,15 +174,22 @@ jobs:
         id: pages_upload
         if: steps.build.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
-        with: {path: .site}
+        with:
+          path: .site
+          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Wait for the uploaded Pages artifact to be visible
         id: pages_ready
         if: steps.pages_upload.outcome == 'success'
+        env:
+          PAGES_ARTIFACT_NAME: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          PAGES_ARTIFACT_ID: ${{ steps.pages_upload.outputs.artifact_id }}
         run: python scripts/wait_for_pages_artifact.py
       - name: Deploy catalogue and status
         id: deployment
         if: steps.build.outcome == 'success' && steps.pages_ready.outcome == 'success'
         uses: ./.github/actions/publish-pages
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Keep failed publication from closing an incident
         id: publication_guard
         if: always() && steps.health.outcome == 'success' && steps.deployment.outcome != 'success' && (inputs.publish == true || vars.PUBLISH_CATALOG == 'true')
