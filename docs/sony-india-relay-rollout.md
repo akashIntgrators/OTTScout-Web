@@ -1,5 +1,10 @@
 # Sony India verification relay: rollout review
 
+**Collection is paused pending SonyLIV permission.** These preparation notes do not
+authorize setup or collection. The reviewed source configuration disables both
+Sony sources, and that pause takes precedence over relay settings. Do not enable
+the sources or deploy a collector until permission has been obtained and reviewed.
+
 This is a proposed rollout, not an instruction that setup has occurred. The VPS
 is trusted to report the Sony HTTPS responses it sees; SSH authenticates the
 VPS but cannot independently prove what Sony returned. The existing discovery

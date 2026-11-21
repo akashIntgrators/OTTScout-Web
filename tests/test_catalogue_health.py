@@ -49,6 +49,54 @@ class CatalogueHealthTests(unittest.TestCase):
         report, catalogue, discovery = values or fixtures()
         return health.evaluate_health(report, catalogue, discovery, now=NOW, **kwargs)
 
+    def test_explicit_permission_pause_is_a_coverage_warning_without_renewing_checks(self):
+        values = fixtures()
+        values[2]['requiredSources'] = []
+        for source in values[2]['sources']:
+            source.update(required=False, status='paused', pauseReason='permission-required', lastAttemptAt=None, lastSuccessAt=None)
+        result, _ = self.evaluate(values)
+        self.assertEqual(result['status'], 'warning')
+        self.assertEqual(signals(result), {'official_discovery_permission_paused': 'warning'})
+        self.assertEqual(result['officialDiscovery']['requiredSources'], [])
+        previous = health.discovery_from_health(result)
+        repeated, _ = health.evaluate_health(values[0], values[1], previous, now=NOW + 60)
+        self.assertEqual(repeated['officialDiscovery']['sources'], result['officialDiscovery']['sources'])
+        self.assertIsNone(repeated['officialDiscovery']['sources'][0]['lastAttemptAt'])
+        values[2]['sources'][0]['pauseReason'] = 'anything-else'
+        self.assertIn('official_required_sources_unknown', signals(self.evaluate(values)[0]))
+
+    def test_newest_first_partial_page_never_advances_full_completion(self):
+        values = fixtures()
+        values[0]['streamingFreshness']['new']['completedThrough'] = health.iso(NOW - 30 * HOUR)
+        latest = {'checkedAt': health.iso(NOW - 60), 'from': health.iso(NOW - 48 * HOUR - 60),
+                  'to': health.iso(NOW - 60), 'oldestEventAt': health.iso(NOW - HOUR),
+                  'newestEventAt': health.iso(NOW - 100), 'hasMore': True, 'events': 25,
+                  'order': 'desc', 'pages': 1, 'scope': 'last48h'}
+        values[0]['latestNewCheck'] = latest
+        result, _ = self.evaluate(values)
+        self.assertEqual(result['newFeed']['latestNewCheck'], latest)
+        self.assertEqual(result['newFeed']['completedThrough'], health.iso(NOW - 30 * HOUR))
+        self.assertEqual(signals(result)['new_feed_stale'], 'critical')
+        self.assertEqual(signals(result)['newest_page_incomplete'], 'warning')
+        self.assertNotIn('newest_check_stale', signals(result))
+        for patch in [{'checkedAt': health.iso(NOW + 1)}, {'order': 'asc'}, {'pages': True}, {'events': -1}, {'events': 26},
+                      {'from': health.iso(NOW - 47 * HOUR - 60)}, {'checkedAt': health.iso(NOW)},
+                      {'from': health.iso(NOW - 120 * HOUR), 'to': health.iso(NOW - 72 * HOUR)},
+                      {'oldestEventAt': health.iso(NOW - 50 * HOUR)}, {'hasMore': 'false'}]:
+            with self.subTest(patch=patch):
+                values[0]['latestNewCheck'] = {**latest, **patch}
+                self.assertIn('newest_check_invalid', signals(self.evaluate(values)[0]))
+
+    def test_empty_newest_page_and_independent_monitor_preserve_observation_time(self):
+        values = fixtures()
+        latest = {'checkedAt': health.iso(NOW - 60), 'from': health.iso(NOW - 48 * HOUR - 60),
+                  'to': health.iso(NOW - 60), 'oldestEventAt': None, 'newestEventAt': None,
+                  'hasMore': False, 'events': 0, 'order': 'desc', 'pages': 1, 'scope': 'last48h'}
+        values[1]['latestNewCheck'] = latest
+        result, _ = health.evaluate_health(catalogue=values[1], discovery=values[2], now=NOW)
+        self.assertEqual(result['newFeed']['latestNewCheck'], latest)
+        self.assertNotIn('newest_check_invalid', signals(result))
+
     def test_fresh_empty_new_feed_is_healthy_despite_old_title_dates_and_partial_coverage(self):
         result, _ = self.evaluate()
         self.assertEqual(result['status'], 'normal')

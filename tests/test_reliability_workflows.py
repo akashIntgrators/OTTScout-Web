@@ -124,6 +124,54 @@ class ReliabilityWorkflowTests(unittest.TestCase):
                 self.assertEqual([json.loads(line) for line in log.read_text().splitlines()],
                                  [['scripts/catalog_sync.py', '--export-cached']])
 
+    def test_paused_sony_sources_ignore_stale_relay_flag_and_incomplete_secrets_in_actual_discovery_script(self):
+        source = script(step_with_id(self.collector, 'discovery'))
+        cases = [
+            [{'platform':'SonyLIV','enabled':False},{'platform':'Netflix','enabled':True}],
+            [{'platform':'SonyLIV','enabled':'true'},{'platform':'Netflix','enabled':True}],
+            [{'platform':'SonyLIV'},{'platform':'Netflix','enabled':True}],
+        ]
+        for sources in cases:
+            with self.subTest(sources=sources), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder); (root / 'data').mkdir(); binary = root / 'bin'; binary.mkdir()
+                (root / 'data/official-sources.json').write_text(json.dumps(sources))
+                log = root / 'argv.jsonl'; forbidden = root / 'forbidden'; wrapper = root / 'discovery_shim.py'
+                wrapper.write_text(
+                    'import json, os, socket, sys\n'
+                    'def denied(*args, **kwargs):\n    raise AssertionError("No network is allowed")\n'
+                    'socket.socket = denied\nsocket.create_connection = denied\n'
+                    'if sys.argv[1:] == ["-"]:\n'
+                    '    exec(compile(sys.stdin.read(), "<actual workflow heredoc>", "exec"), {"__name__":"__main__"})\n'
+                    'elif sys.argv[1:2] == ["scripts/official_discovery.py"]:\n'
+                    '    with open(os.environ["ARGV_LOG"], "a") as out:\n        out.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+                    'else:\n    raise SystemExit("Unexpected Python command in discovery step")\n')
+                for name in ('python', 'python3'):
+                    shim = binary / name
+                    shim.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' ' + shlex.quote(str(wrapper)) + ' "$@"\n')
+                    shim.chmod(0o755)
+                for name in ('ssh', 'mktemp'):
+                    command = binary / name
+                    command.write_text('#!/bin/sh\nprintf "%s\\n" "' + name + '" >> "$FORBIDDEN_LOG"\nexit 92\n')
+                    command.chmod(0o755)
+                env = {'PATH':str(binary), 'PYTHONNOUSERSITE':'1', 'ARGV_LOG':str(log), 'FORBIDDEN_LOG':str(forbidden),
+                       'RUNNER_TEMP':str(root), 'SONY_RELAY_ENABLED':'true', 'SONY_RELAY_HOST':'incomplete-host.invalid',
+                       'SONY_RELAY_PRIVATE_KEY':'', 'SONY_RELAY_KNOWN_HOSTS':''}
+                subprocess.run(['/bin/bash','--noprofile','--norc','-e','-o','pipefail','-c',source],
+                               cwd=root,env=env,capture_output=True,text=True,check=True,timeout=10)
+                self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], [[
+                    'scripts/official_discovery.py','--catalog','data/catalog.json','--cache-dir','.state/official-discovery',
+                    '--output','data/official-discovered.json','--report','reports/official-discovery.json',
+                    '--max-requests','12','--max-seconds','120']])
+                self.assertFalse(forbidden.exists(), 'Paused sources must not start SSH or prepare a relay directory')
+                self.assertEqual(list(root.glob('sony-relay.*')), [])
+
+    def test_health_commands_do_not_override_explicitly_paused_sony_sources_as_required(self):
+        for text in (self.collector,self.watchdog):
+            health_steps = [step for step in steps(text) if 'scripts/catalogue_health.py' in script(step)]
+            self.assertGreaterEqual(len(health_steps), 2)
+            for step in health_steps:
+                self.assertNotRegex(script(step), r'--required-source\s+sony-(?:movies|series)\b')
+
     def test_actual_online_checker_retains_initialize_only_when_explicitly_requested(self):
         checker = script(step_with_id(self.collector, 'checker'))
         for initialize, expected in [('true', ['--initialize']), ('false', []), ('', [])]:

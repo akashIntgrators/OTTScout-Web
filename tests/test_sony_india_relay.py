@@ -153,7 +153,10 @@ r.serve(%r,relay_factory=FixtureRelay)
                 with tempfile.TemporaryDirectory(dir=base) as http:
                     client=d.PublicClient(http,int(time.time()),transport=transport)
                     with patch('scripts.official_discovery.public_get',side_effect=AssertionError('no paid or direct request')):
-                        records,report=d.discover(state,int(time.time()),sources=[next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-movies')],client=client)
+                        # An explicitly enabled offline fixture tests transport
+                        # behavior independently of the production permission pause.
+                        source={**next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-movies'),'enabled':True}
+                        records,report=d.discover(state,int(time.time()),sources=[source],client=client)
                     self.assertGreater(report['sources'][0]['candidates'],0)
                     self.assertIsNotNone(report['sources'][0]['lastSuccessAt'])
                     self.assertEqual(report['providerApiRequests'],0)
@@ -167,7 +170,8 @@ r.serve(%r,relay_factory=FixtureRelay)
         with tempfile.TemporaryDirectory() as tmp:
             def unavailable(*args): raise d.DiscoveryError('relay-unavailable','Sony India relay unavailable')
             client=d.PublicClient(Path(tmp)/'http',int(time.time()),transport=unavailable)
-            _,report=d.discover(tmp,int(time.time()),sources=[next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-movies')],client=client)
+            source={**next(x for x in d.DEFAULT_SOURCES if x['id']=='sony-movies'),'enabled':True}
+            _,report=d.discover(tmp,int(time.time()),sources=[source],client=client)
             self.assertEqual(report['sources'][0]['status'],'error')
             self.assertIsNone(report['sources'][0]['lastSuccessAt'])
             self.assertEqual(report['providerApiRequests'],0)

@@ -38,6 +38,8 @@ CONSERVATION_NEW_REQUESTS_PER_DAY = 2
 FRESH_NEW_REQUESTS_PER_DAY = 4
 CONSERVATION_CATCHUP_REQUESTS_PER_DAY = 6
 CONSERVATION_EMERGENCY_RESERVE = 2
+LATEST_NEW_ATTEMPT_KEY = 'latest_new_attempt_v1'
+LATEST_NEW_CHECK_KEY = 'latest_new_check_v1'
 OFFICIAL_LISTINGS_PATH = Path(__file__).resolve().parents[1] / 'data/official-listings.json'
 
 class SyncError(Exception):
@@ -114,6 +116,12 @@ def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
         emergency = min(1, remaining) if future_days else 0
         protected = max(emergency, remaining-1)
     available = max(0, min(daily_limit-new_attempts, remaining-protected))
+    interval = 6*3600 if planned >= 4 else 12*3600 if planned >= 2 else DAY
+    attempted = get_meta(db, LATEST_NEW_ATTEMPT_KEY)
+    current_head_known = (isinstance(attempted, dict) and type(attempted.get('at')) is int
+                          and 0 < attempted['at'] <= now and attempted['at']//interval == now//interval)
+    future_head_slots = DAY//interval - (now % DAY)//interval - 1 if conserving and current_head_known else 0
+    reserved_heads = min(available, future_head_slots)
     backlog = bool(get_meta(db, 'change_window_v2:new'))
     return {'monthlyLimit': limit, 'requestsUsed': used, 'requestsRemaining': remaining,
             'freshnessReserve': reserve, 'backfillAvailable': 0 if backlog else max(0, remaining-reserve),
@@ -125,7 +133,15 @@ def request_budget(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
             'plannedPerFutureDay': planned, 'protectedFutureRequests': protected,
             'emergencyReserve': emergency, 'catchupDailyLimit': CONSERVATION_CATCHUP_REQUESTS_PER_DAY,
             'capacityInsufficient': conserving and planned < FRESH_NEW_REQUESTS_PER_DAY,
-            'freshRequestsAvailableToday': available if conserving else None, 'newFeedBacklog': backlog}
+            'freshRequestsAvailableToday': available if conserving else None, 'newFeedBacklog': backlog,
+            'futureHeadChecksToday': future_head_slots, 'reservedHeadRequestsToday': reserved_heads,
+            'newBacklogRequestsAvailableToday': max(0, available-reserved_heads) if conserving else None}
+
+def new_check_interval(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
+    budget = request_budget(db, now, monthly_limit)
+    if not budget['conservationMode'] or budget['plannedPerFutureDay'] >= 4:
+        return 6*3600
+    return 12*3600 if budget['plannedPerFutureDay'] >= 2 else DAY
 
 def change_feed_due(db, kind, now, conservation=False, monthly_limit=MONTHLY_REQUEST_CAP):
     if conservation and (kind != 'new' or request_budget(db, now, monthly_limit)['newFeedRequestsRemainingToday'] <= 0):
@@ -135,8 +151,7 @@ def change_feed_due(db, kind, now, conservation=False, monthly_limit=MONTHLY_REQ
     if get_meta(db, 'change_window_v2:'+kind):
         return True
     watermark = get_meta(db, 'watermark:'+kind)
-    budget = request_budget(db, now, monthly_limit) if conservation and kind == 'new' else None
-    interval = (6*3600 if budget['plannedPerFutureDay'] >= 4 else 12*3600 if budget['plannedPerFutureDay'] >= 2 else DAY) if budget else (6*3600 if kind == 'new' else DAY)
+    interval = new_check_interval(db, now, monthly_limit) if conservation and kind == 'new' else (6*3600 if kind == 'new' else DAY)
     # UTC slots tolerate GitHub scheduling jitter without repeating a manual
     # check in the same slot or accidentally waiting twelve hours for new titles.
     return watermark is None or watermark//interval < now//interval
@@ -246,7 +261,7 @@ class Client:
         self.run_limit, self.calls = min(RUN_REQUEST_CAP, max(0, run_limit)), 0
         self.base = 'https://api.movieofthenight.com/v4' if mode == 'direct' else 'https://streaming-availability.p.rapidapi.com'
 
-    def get(self, endpoint, params=None):
+    def get(self, endpoint, params=None, *, request_checkpoint=None):
         now = int(time.time())
         budget = request_budget(self.db, now, self.monthly_limit)
         if budget['requestsRemaining'] <= 0 or self.calls >= self.run_limit:
@@ -260,6 +275,9 @@ class Client:
             raise BudgetReached('Quota conservation: maintenance and older imports deferred')
         if fresh_request and budget['conservationMode'] and budget['newFeedRequestsRemainingToday'] <= 0:
             raise BudgetReached('Quota conservation: protected future allowance or daily limit reached; resume next UTC day')
+        if (endpoint == '/changes' and fresh_request and (params or {}).get('order_direction') != 'desc'
+                and budget['conservationMode'] and budget['newBacklogRequestsAvailableToday'] <= 0):
+            raise BudgetReached('Quota conservation: remaining requests reserved for later newest-first checks today')
         # Count and commit before sending, including network failures and malformed responses.
         row = self.db.execute('INSERT INTO requests(at,endpoint,status) VALUES (?,?,0)', (now, endpoint))
         request_id = row.lastrowid
@@ -267,6 +285,10 @@ class Client:
             # Use the pre-insert budget: the just-inserted title ledger row must
             # not be counted once by migration and again by this increment.
             set_meta(self.db, 'new_release_attempts_v2', {'utcDay':now//DAY, 'attempts':budget['newFeedRequestsToday']+1})
+        if request_checkpoint is not None:
+            # An internal checkpoint shares the charged-request transaction. A
+            # prevented request cannot consume the newest-first scan's slot.
+            set_meta(self.db, request_checkpoint[0], request_checkpoint[1])
         self.db.commit()
         self.calls += 1
         headers = {'Accept': 'application/json'}
@@ -465,12 +487,12 @@ def validate_change_page(page, mapping, state, checked_at):
             raise SyncError('Change has invalid service evidence')
 
 
-def apply_change_page(db, page, mapping, kind, checked_at):
+def apply_change_page(db, page, mapping, kind, checked_at, *, include_history=False):
     changed = sum(save_show(db, item, mapping, checked_at) for item in page['shows'].values())
     reverse = {v:k for k,v in mapping.items()}
     for event in page['changes']:
         service = event.get('service', {}).get('id')
-        if event['timestamp'] <= get_meta(db, 'baseline_complete', checked_at) or service not in reverse:
+        if (not include_history and event['timestamp'] <= get_meta(db, 'baseline_complete', checked_at)) or service not in reverse:
             continue
         event_id = json.dumps([event.get('showId'), service, kind, event['timestamp'], event.get('link')])
         db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?)',
@@ -488,6 +510,64 @@ def record_new_publication(db, now, pages, changed, recovered=False):
              'changedRecords':previous['changedRecords']+changed,
              'recoveredPages':previous['recoveredPages']+(pages if recovered else 0),
              'latestPublishedAt':now})
+
+
+def latest_new_due(db, now, monthly_limit=MONTHLY_REQUEST_CAP):
+    budget = request_budget(db, now, monthly_limit)
+    if budget['requestsRemaining'] <= 0 or (budget['conservationMode'] and budget['newFeedRequestsRemainingToday'] <= 0):
+        return False
+    attempted = get_meta(db, LATEST_NEW_ATTEMPT_KEY)
+    if attempted is not None and (not isinstance(attempted, dict) or type(attempted.get('at')) is not int or not 0 < attempted['at'] <= now):
+        raise SyncError('Invalid newest-first request checkpoint')
+    # A deployment that already completed this slot needs no duplicate first
+    # head request. Once enabled, the independent attempt checkpoint owns cadence.
+    previous = attempted['at'] if attempted is not None else get_meta(db, 'watermark:new')
+    interval = new_check_interval(db, now, monthly_limit)
+    return previous is None or previous//interval < now//interval
+
+
+def sync_latest_new(db, client, mapping, now):
+    """One newest-first public-catalogue page; never advances complete-feed state."""
+    monthly_limit = getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP)
+    if not latest_new_due(db, now, monthly_limit) or getattr(client, 'calls', 0) >= getattr(client, 'run_limit', RUN_REQUEST_CAP):
+        return 0
+    window = {'from':now-2*DAY, 'to':now}
+    params = {'country':'in', 'catalogs':','.join(mapping.values()), 'change_type':'new',
+              'item_type':'show', 'from':window['from'], 'to':now, 'order_direction':'desc'}
+    checkpoint = (LATEST_NEW_ATTEMPT_KEY, {'at':now})
+    if isinstance(client, Client):
+        page = client.get('/changes', params, request_checkpoint=checkpoint)
+    else:
+        # Offline injected clients retain the existing interface. Real provider
+        # attempts use Client's pre-I/O durable ledger/checkpoint transaction.
+        try:
+            page = client.get('/changes', params)
+        except BudgetReached:
+            raise
+        except SyncError:
+            set_meta(db, *checkpoint); db.commit()
+            raise
+        set_meta(db, *checkpoint); db.commit()
+    validate_change_page(page, mapping, window, now)
+    dates = [event['timestamp'] for event in page['changes']]
+    if len(dates) > 25 or dates != sorted(dates, reverse=True):
+        raise SyncError('Invalid newest-first event ordering or page size')
+    if page['hasMore'] and (not isinstance(page.get('nextCursor'), str) or not page['nextCursor']):
+        raise SyncError('Missing newest-first continuation evidence')
+    scan = {'checkedAt':stamp(now), 'from':stamp(window['from']), 'to':stamp(now),
+            'hasMore':page['hasMore'], 'events':len(dates),
+            'oldestEventAt':stamp(min(dates)) if dates else None, 'newestEventAt':stamp(max(dates)) if dates else None,
+            'order':'desc', 'pages':1, 'scope':'last48h'}
+    db.execute('SAVEPOINT publish_latest_new')
+    try:
+        changed = apply_change_page(db, page, mapping, 'new', now, include_history=True)
+        set_meta(db, LATEST_NEW_CHECK_KEY, scan)
+        record_new_publication(db, now, 1, changed)
+        db.execute('RELEASE publish_latest_new'); db.commit()
+        return changed
+    except Exception:
+        db.execute('ROLLBACK TO publish_latest_new'); db.execute('RELEASE publish_latest_new')
+        raise
 
 
 def flush_staged_new_pages(db, now):
@@ -546,6 +626,10 @@ def sync_change_feed(db, client, mapping, kind, started, now):
         raise SyncError('Saved change query expired; review before starting a new baseline')
     mapping = state.get('mapping', mapping)
     while True:
+        budget = request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))
+        if (kind == 'new' and budget['conservationMode'] and budget['newBacklogRequestsAvailableToday'] <= 0
+                and budget['reservedHeadRequestsToday'] > 0):
+            return changed
         params = {'country':'in', 'catalogs':','.join(mapping.values()), 'change_type':kind,
                   'item_type':'show', 'from':state['from'], 'to':state['to'], 'order_direction':'asc'}
         if state['cursor']:
@@ -591,13 +675,11 @@ def sync(db, client, now, recheck_reports=False):
         return request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))['conservationMode']
     changed = flush_staged_new_pages(db, now)
     coverage = get_meta(db, 'coverage')
-    coverage_interval = 7*DAY if conserving() else DAY
     # Resume the frozen NEW query first with its already-validated mapping;
-    # refreshing optional coverage must not spend its scarce catch-up budget.
+    # optional coverage refreshes must never spend scarce head-check capacity.
+    # Existing authenticated coverage remains usable throughout conservation.
     pending_new = get_meta(db, 'change_window_v2:new')
-    budget = request_budget(db, now, getattr(client, 'monthly_limit', MONTHLY_REQUEST_CAP))
-    coverage_spare = not budget['conservationMode'] or budget['requestsRemaining'] > budget['protectedFutureRequests']
-    if not coverage or (not pending_new and coverage_spare and now - coverage['checkedAt'] >= coverage_interval):
+    if not coverage or (not conserving() and not pending_new and now - coverage['checkedAt'] >= DAY):
         mapping = platform_map(client.get('/countries/in'))
         if not mapping:
             raise SyncError('None of the requested services are supported')
@@ -633,6 +715,7 @@ def sync(db, client, now, recheck_reports=False):
     if not get_meta(db, 'baseline_complete'):
         set_meta(db, 'baseline_complete', now)
         db.commit()
+    changed += sync_latest_new(db, client, mapping, now)
     # Large change feeds resume from committed pages under the same request caps.
     # New releases must never wait behind an arbitrarily large maintenance feed.
     change_types = ['new'] + sorted(('updated', 'removed'),
@@ -694,6 +777,7 @@ def report(db, now):
             'newCheckHours': (6 if budget['plannedPerFutureDay'] >= 4 else 12 if budget['plannedPerFutureDay'] >= 2 else 24) if budget['conservationMode'] else 6,
             'streamingFreshness': streaming_freshness(db, now, budget['conservationMode'], budget['monthlyLimit']),
             'newPublication': new_publication(db),
+            'latestNewCheck': get_meta(db, LATEST_NEW_CHECK_KEY),
             'requestsDuringPilot': db.execute('SELECT count(*) FROM requests WHERE at>=?', (begin,)).fetchone()[0],
             'supportedPlatforms': list(coverage.get('mapping', {})), 'missingPlatforms': coverage.get('missing', list(PLATFORMS)),
             'lastSuccessfulUpdate': stamp(get_meta(db, 'last_success')) if get_meta(db, 'last_success') else None,
@@ -760,6 +844,7 @@ def export_catalog(db, path, now):
               'requestBudget': budget,
               'streamingFreshness': streaming_freshness(db, now, budget['conservationMode'], budget['monthlyLimit']),
               'newPublication': new_publication(db),
+              'latestNewCheck': get_meta(db, LATEST_NEW_CHECK_KEY),
               'syncStatus': latest_run[0] if latest_run else 'unknown',
               'scope': 'Gradually expanded streaming catalog plus tracked additions; search covers imported titles.',
               'catalogBackfill': catalog_backfill_status(db, get_meta(db, 'coverage', {}).get('mapping', {})),

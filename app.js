@@ -454,6 +454,36 @@ function reportText(title, category, platform, correction) {
   const offers=(title.offers||[]).filter(o=>platform==='All listed platforms'||o.platform===platform);
   return `Title: ${title.title} (${title.year||'Year unverified'})\nCatalogue ID: ${title.id}\nPage: https://ottscout.techiwithhelmet.com/titles/${encodeURIComponent(String(title.id).replace(/^motn:/,''))}/\nIssue: ${category}\nPlatform: ${platform}\nListed original language: ${title.originalLanguage||'Unverified'}\nListed genres: ${(title.tmdb?.genres||[]).join(', ')||'Unverified'}\nListed offers:\n${offers.slice(0,8).map(o=>'- '+o.platform+' | '+(offerNames[o.type]||'Unverified')+(o.addon?' ('+o.addon+')':'')+' | audio: '+formatLanguages(o.audio)+' | description reported: '+formatLanguages(descriptionReport(o)?.languages||[])).join('\n')}\n\nWhat should be corrected?\n${correction.trim()}\n\nSource snapshot: ${liveCatalog?.updatedAt||'Sample preview'}`;
 }
+function correctionIssueURL(title, platform, notes, problem) {
+  const url=new URL('https://github.com/akashIntgrators/OTTScout-Web/issues/new');
+  url.searchParams.set('template','catalogue-correction.yml');
+  const name=String(title.title||'').slice(0,200);
+  url.searchParams.set('title','[Catalogue correction] '+name);
+  url.searchParams.set('title_name',name);
+  if(['Movie','Series'].includes(title.type))url.searchParams.set('title_type',title.type);
+  const offers=Array.isArray(title.offers)?title.offers:[];
+  const present=[...new Set(offers.map(offer=>offer.platform))];
+  const chosen=platforms.includes(platform)?platform:present.length===1?present[0]:null;
+  if(platforms.includes(chosen)){
+    url.searchParams.set('platform',chosen);
+    for(const offer of offers.filter(offer=>offer.platform===chosen)){
+      try{
+        const link=new URL(offer.link);
+        if(link.protocol==='https:'&&!link.username&&!link.password&&link.href.length<=1000){url.searchParams.set('official_url',link.href);break;}
+      }catch{/* The reporter can supply the exact official title link. */}
+    }
+  }
+  if(problem)url.searchParams.set('problem',String(problem).slice(0,1200));
+  if(notes)url.searchParams.set('notes',String(notes).slice(0,1800));
+  while(url.href.length>7500&&url.searchParams.get('notes')){
+    const text=url.searchParams.get('notes');url.searchParams.set('notes',text.slice(0,Math.floor(text.length/2)));
+  }
+  while(url.href.length>7500&&url.searchParams.get('problem')){
+    const text=url.searchParams.get('problem');url.searchParams.set('problem',text.slice(0,Math.floor(text.length/2)));
+  }
+  if(url.href.length>7500)url.searchParams.delete('official_url');
+  return url.href;
+}
 function openReport(title) {
   const dialog=$('#report-dialog');$('#report-title').textContent='Report: '+title.title;
   $('#report-correction').value='';$('#report-category').value='Original language';$('#report-feedback').textContent='';
@@ -462,8 +492,10 @@ function openReport(title) {
   const update=()=>{
     const text=reportText(title,$('#report-category').value,$('#report-platform').value,$('#report-correction').value);
     $('#report-preview').value=text;
-    const url=new URL('https://github.com/akashIntgrators/OTTScout-Web/issues/new');url.searchParams.set('title','Incorrect details: '+title.title);url.searchParams.set('body',text);
-    $('#report-github').href=url.href;
+    const problem=$('#report-category').value+': '+$('#report-correction').value;
+    const link=correctionIssueURL(title,$('#report-platform').value,text,problem);
+    $('#report-github').href=link;
+    $('#report-feedback').textContent=new URL(link).searchParams.get('problem')===problem?'':'The link includes a shortened summary. Copy the report to include your full correction.';
   };
   for(const id of ['report-category','report-platform','report-correction'])$('#'+id).oninput=update;
   $('#report-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#report-preview').value);$('#report-feedback').textContent='Report copied.';}catch{$('#report-preview').focus();$('#report-preview').select();$('#report-feedback').textContent='Select and copy the report below.';}};
@@ -573,6 +605,10 @@ function emptyState() {
   action.type='button'; action.onclick=()=>{ if(view==='discover') resetFilters(); else { $('#search').value=''; setView('discover'); } };
   node.append(action);
   if(audioDescriptionOnly){const guide=element('a','Read the audio-description guide');guide.href='/audio-description/';node.append(guide);}
+  const query=String($('#search')?.value||'').trim();
+  const report=element('a',query?'Report a missing title':'Report a catalogue correction');
+  report.href=query?correctionIssueURL({title:query,offers:[]},null,'Not found in the current filtered catalogue search.','Missing title or platform offer'):'/corrections/';
+  node.append(report);
   return node;
 }
 function normalizeSearch(value) {

@@ -25,9 +25,11 @@ FAQ = 'https://origin-staticv2.sonyliv.com/UI_icons/india_faqs.html'
 ROOT = Path(__file__).resolve().parents[1]
 LANGUAGES = {'ENG':'English','HIN':'Hindi','TEL':'Telugu','TAM':'Tamil','KAN':'Kannada','MAL':'Malayalam'}
 DEFAULT_SOURCES = [
-    {'id':'sony-movies','platform':'SonyLIV','adapter':'sony','kind':'Movie','url':'https://www.sonyliv.com/custompage/movies-399'},
-    {'id':'sony-series','platform':'SonyLIV','adapter':'sony','kind':'Series','url':'https://www.sonyliv.com/custompage/tv-shows-32990'},
-    {'id':'netflix-tudum','platform':'Netflix','adapter':'netflix-tudum','url':'https://www.netflix.com/tudum/articles/new-on-netflix'},
+    {'id':'sony-movies','platform':'SonyLIV','adapter':'sony','kind':'Movie','url':'https://www.sonyliv.com/custompage/movies-399',
+     'enabled':False,'pauseReason':'permission-required'},
+    {'id':'sony-series','platform':'SonyLIV','adapter':'sony','kind':'Series','url':'https://www.sonyliv.com/custompage/tv-shows-32990',
+     'enabled':False,'pauseReason':'permission-required'},
+    {'id':'netflix-tudum','platform':'Netflix','adapter':'netflix-tudum','url':'https://www.netflix.com/tudum/articles/new-on-netflix','enabled':True},
 ]
 
 
@@ -400,19 +402,36 @@ def discover(cache_dir,now,*,catalog=None,sources=None,client=None):
         state['records']={};state['policyVersion']=2
     catalog=catalog or {};sources=DEFAULT_SOURCES if sources is None else sources;client=client or PublicClient(directory/'http',now)
     require(bool(sources),'source-invalid','No reviewed sources configured')
+    # Keep omitted paused sources paused too: selecting only another source
+    # must not publish saved Sony proof from an earlier enabled configuration.
+    policies={source['id']:source for source in DEFAULT_SOURCES}
+    policies.update({source['id']:source for source in sources})
+    def paused_record(key,record):
+        ident=key.split(':',1)[0]
+        source=policies.get(ident)
+        if source and source.get('enabled') is False:return source
+        return next((source for source in policies.values() if source.get('enabled') is False
+                     and source['platform']==record.get('platform') and source.get('kind')==record.get('type')),None)
     start=state.get('sourceCursor',0)%len(sources)
     ordered_sources=sources[start:]+sources[:start]
     state['sourceCursor']=(start+1)%len(sources)
     atomic_json(path,state)
     report={'schemaVersion':1,'evaluatedAt':now,'sources':[],'unsupportedPlatforms':['Prime Video','JioHotstar','ZEE5','Sun NXT','aha'],
-            'coverageNote':'Bounded Sony public-index checks only. Netflix automatic checks respect its robots policy. This is not a complete provider catalogue.',
-            'revokedAutomaticRecords':[]}
+            'coverageNote':'Automatic coverage is limited by source permission and robots policy. Paused sources are not contacted. This is not a complete provider catalogue.',
+            'revokedAutomaticRecords':[],'quarantinedRecords':[]}
     save=lambda:atomic_json(path,state)
     for source in ordered_sources:
         ident=source['id'];client.source=ident;old=state['sources'].get(ident,{})
         item={'id':ident,'platform':source['platform'],'required':source['adapter']=='sony','lastAttemptAt':now,'lastSuccessAt':old.get('lastSuccessAt'),
               'status':'ok','attempted':0,'candidates':0,'confirmed':0,'gaps':0,'errors':[],'unverifiedCandidates':[]}
         report['sources'].append(item)
+        if source.get('enabled') is False:
+            # Do not even ask robots.txt: permission is a prerequisite distinct
+            # from path-level crawling policy or an available cached response.
+            item.update({'status':'paused','required':False,'pauseReason':source.get('pauseReason','permission-required'),
+                         'lastAttemptAt':old.get('lastAttemptAt'),'sourceFlagConflicts':0,'warnings':[]})
+            state['sources'][ident]=deepcopy(item);save()
+            continue
         state['sources'][ident]=deepcopy(item);save()
         try:
             html,final=client.get(source['url'])
@@ -479,7 +498,12 @@ def discover(cache_dir,now,*,catalog=None,sources=None,client=None):
         if item['gaps'] and item['status']=='ok':item['status']='partial'
         state['sources'][ident]=deepcopy(item);save()
     records=[];seen=set()
-    for record in state['records'].values():
+    for key,record in state['records'].items():
+        if isinstance(record,dict) and (paused:=paused_record(key,record)):
+            report['quarantinedRecords'].append({'id':record.get('id'),'sourceId':paused['id'],
+                'reason':paused.get('pauseReason','permission-required'),
+                'verifiedAt':record.get('verifiedAt'),'expiresAt':record.get('expiresAt')})
+            continue
         if isinstance(record,dict) and type(record.get('expiresAt')) is int and record['expiresAt']>now and record.get('verifiedAt',now+1)<=now:
             identity=(record.get('platform'),record.get('platformTitleId'))
             if identity not in seen:seen.add(identity);records.append(record)
@@ -510,6 +534,10 @@ def main():
     require(isinstance(sources,list) and all(s in DEFAULT_SOURCES for s in sources),'source-invalid','Only reviewed official sources may run')
     catalog=read_json(args.catalog,{}) if args.catalog else {}
     relay_args=(args.sony_ssh_host,args.sony_ssh_identity,args.sony_ssh_known_hosts)
+    if not any(source.get('adapter') == 'sony' and source.get('enabled') is True for source in sources):
+        # A permission pause dominates all transport settings, including relay
+        # configuration left over from a previous deployment.
+        relay_args=(None,None,None)
     require(not any(relay_args) or all(relay_args),'relay-config','All Sony relay settings are required')
     if all(relay_args):
         # Never reuse another egress location's cached HTML or conditional headers.

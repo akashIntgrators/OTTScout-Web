@@ -1,0 +1,104 @@
+name: Report a missing title or catalogue correction
+description: Share an official source for a missing title, availability, date or language correction in India.
+title: '[Catalogue] '
+labels: ['catalogue-correction']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a public corrections inbox. A maintainer reviews reports before any catalogue change; submitting this form does not publish a title.
+        Please share official platform links and keep playable audio separate from a title's original language. Leave uncertain details blank rather than guessing.
+  - type: input
+    id: title_name
+    attributes:
+      label: Movie or series name
+      placeholder: The name shown on the official platform
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Netflix
+        - Prime Video
+        - Sun NXT
+        - JioHotstar
+        - ZEE5
+        - aha
+        - SonyLIV
+    validations:
+      required: true
+  - type: dropdown
+    id: title_type
+    attributes:
+      label: Movie or series
+      options:
+        - Movie
+        - Series
+    validations:
+      required: true
+  - type: input
+    id: official_url
+    attributes:
+      label: Official title URL
+      description: The exact movie or show page, including its platform title ID. Please avoid search, episode or home-page links.
+      placeholder: https://www.netflix.com/in/title/12345678
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What needs correcting?
+      description: For example, a missing title, wrong platform, rental label, date, playable language or original language.
+    validations:
+      required: true
+  - type: dropdown
+    id: availability
+    attributes:
+      label: Availability in India
+      options:
+        - Available now in India
+        - Announced or coming soon
+        - Unsure or cannot verify
+    validations:
+      required: true
+  - type: input
+    id: india_evidence
+    attributes:
+      label: India availability evidence URL
+      description: If known, add an official India listing or dated official announcement. Leave blank if you cannot verify it; a maintainer must confirm evidence before publication.
+  - type: input
+    id: release_date
+    attributes:
+      label: OTT release date, if known
+      description: Use YYYY-MM-DD for the platform's India release, rather than the theatrical release. Leave blank if unconfirmed.
+  - type: input
+    id: release_evidence
+    attributes:
+      label: Dated OTT release evidence URL
+      description: An official dated announcement or exact listing that states this platform release date.
+  - type: input
+    id: audio
+    attributes:
+      label: Playable audio languages, if explicitly listed
+      description: English, Hindi, Telugu, Tamil, Kannada or Malayalam. A trailer's language does not establish playable movie or series audio.
+  - type: input
+    id: audio_evidence
+    attributes:
+      label: Playable audio evidence URL
+      description: The exact title page or authorized distributor listing that explicitly names those audio tracks.
+  - type: input
+    id: original_language
+    attributes:
+      label: Original language, if explicitly confirmed
+      description: This is separate from available dubs. Leave blank if the source does not explicitly identify the original language.
+  - type: input
+    id: original_evidence
+    attributes:
+      label: Original-language evidence URL
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes
+      description: Include device or subscription conditions if relevant. Reports and links are public; do not include account, payment or login details.

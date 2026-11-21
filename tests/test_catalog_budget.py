@@ -74,6 +74,9 @@ class BudgetTests(unittest.TestCase):
         sync.set_meta(self.db, 'recent_backfill_v1', {'complete': True, 'pages': 1})
         for kind in ('new', 'updated', 'removed'):
             sync.set_meta(self.db, 'watermark:' + kind, NOW)
+        # This fixture represents a fully checked current slot. Individual head
+        # scan tests explicitly remove/age this independent checkpoint.
+        sync.set_meta(self.db, sync.LATEST_NEW_ATTEMPT_KEY, {'at':NOW})
         sync.set_meta(self.db, 'last_success', NOW)
         self.db.commit()
 
@@ -193,8 +196,9 @@ class BudgetTests(unittest.TestCase):
         self.prepared_catalogue()
         later = epoch('2026-11-04T12:40:00+00:00')
         client, _ = self.run_sync(later, {'CATALOG_BACKFILL_PAGES': '0'})
-        self.assertEqual(client.calls, 1)
-        self.assertEqual([params['change_type'] for path, params in self.requests], ['new'])
+        self.assertEqual(client.calls, 2)
+        self.assertEqual([params['change_type'] for path, params in self.requests], ['new','new'])
+        self.assertEqual([params['order_direction'] for path, params in self.requests], ['desc','asc'])
         self.assertEqual(sync.get_meta(self.db, 'watermark:new'), later)
         self.assertEqual(sync.get_meta(self.db, 'watermark:updated'), NOW)
         self.assertEqual(sync.get_meta(self.db, 'last_success'), NOW)
@@ -317,13 +321,13 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(client.calls,0,'Manual/scheduled repeat cannot spend another new-page allowance')
         tomorrow=NOW+sync.DAY
         with patch.object(sync.time,'time',return_value=tomorrow), patch.object(sync,'urlopen',side_effect=reply):
-            with self.assertRaises(sync.BudgetReached):sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),tomorrow)
-        self.assertEqual(requested[-2]['cursor'],'2')
-        self.assertEqual(int(requested[-2]['to']),state['to'],'A resumed query retains its frozen end')
-        self.assertNotIn('cursor',requested[-1],'The current window starts immediately after the old one completes')
-        self.assertEqual(int(requested[-1]['to']),tomorrow)
+            self.assertEqual(sync.sync(self.db,sync.Client(self.db,'fixture-not-a-key'),tomorrow),0)
+        self.assertEqual(requested[-1]['cursor'],'2')
+        self.assertEqual(int(requested[-1]['to']),state['to'],'A resumed query retains its frozen end')
+        self.assertNotIn('cursor',requested[-2],'The newest-first page precedes the old frozen query')
+        self.assertEqual((requested[-2]['order_direction'],int(requested[-2]['to'])),('desc',tomorrow))
         self.assertEqual(sync.get_meta(self.db,'watermark:new'),NOW)
-        self.assertEqual(sync.get_meta(self.db,'change_window_v2:new')['pages'],1)
+        self.assertIsNone(sync.get_meta(self.db,'change_window_v2:new'))
         self.assertEqual(sync.new_feed_requests_today(self.db,tomorrow),2)
         self.assertEqual(sync.request_budget(self.db,tomorrow)['requestsUsed'],373)
 
@@ -342,7 +346,7 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(sync.new_feed_requests_today(self.db,NOW),2)
         self.assertEqual(sync.request_budget(self.db,NOW)['requestsUsed'],371)
 
-    def test_conservation_reuses_coverage_for_seven_days_then_refreshes_it_once(self):
+    def test_conservation_defers_optional_coverage_regardless_age_and_normal_mode_refreshes_again(self):
         self.prepared_catalogue()
         self.attempts(NOW-1,369)
         sync.set_meta(self.db,'coverage',{'mapping':self.mapping,'checkedAt':NOW-6*sync.DAY,'missing':[]})
@@ -350,9 +354,12 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(self.run_sync()[0].calls,0)
         sync.set_meta(self.db,'coverage',{'mapping':self.mapping,'checkedAt':NOW-7*sync.DAY,'missing':[]})
         self.db.commit()
-        self.assertEqual(self.run_sync()[0].calls,1)
-        self.assertEqual(self.requests[0][0],'/v4/countries/in')
-        self.assertEqual(sync.get_meta(self.db,'coverage')['checkedAt'],NOW)
+        self.assertEqual(self.run_sync()[0].calls,0)
+        self.assertEqual(sync.get_meta(self.db,'coverage')['checkedAt'],NOW-7*sync.DAY)
+        december=epoch('2026-12-01T01:00:00+00:00')
+        self.run_sync(december,{'CATALOG_BACKFILL_PAGES':'0'})
+        self.assertEqual([path for path,_ in self.requests].count('/v4/countries/in'),1)
+        self.assertEqual(sync.get_meta(self.db,'coverage')['checkedAt'],december)
 
     def test_next_month_automatically_resumes_maintenance_with_old_cursors_and_request_history(self):
         self.prepared_catalogue()
@@ -367,12 +374,12 @@ class BudgetTests(unittest.TestCase):
         self.assertTrue(sync.request_budget(self.db,november)['conservationMode'])
         client,_=self.run_sync(december,{'CATALOG_BACKFILL_PAGES':'0'})
         self.assertFalse(sync.request_budget(self.db,december)['conservationMode'])
-        self.assertEqual([p['change_type'] for _,p in self.requests],['new','updated','removed'])
-        self.assertEqual(self.requests[1][1]['cursor'],pending['cursor'])
-        self.assertEqual(int(self.requests[1][1]['to']),pending['to'])
+        self.assertEqual([p['change_type'] for _,p in self.requests],['new','new','updated','removed'])
+        self.assertEqual(self.requests[2][1]['cursor'],pending['cursor'])
+        self.assertEqual(int(self.requests[2][1]['to']),pending['to'])
         self.assertIsNone(sync.get_meta(self.db,'change_window_v2:updated'))
-        self.assertEqual((client.calls,sync.request_budget(self.db,december)['requestsUsed']),(3,3))
-        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],383,'Monthly accounting never deletes past requests')
+        self.assertEqual((client.calls,sync.request_budget(self.db,december)['requestsUsed']),(4,4))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM requests').fetchone()[0],384,'Monthly accounting never deletes past requests')
 
     def test_conservation_run_exports_new_freshness_without_claiming_maintenance_is_current(self):
         self.prepared_catalogue()
@@ -426,7 +433,7 @@ class BudgetTests(unittest.TestCase):
         self.db.commit()
         later = epoch('2026-11-04T12:40:00+00:00')
         client, _ = self.run_sync(later)
-        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.calls, 2)
         self.assertEqual(self.requests[0][1]['change_type'], 'new')
         self.assertEqual(sync.get_meta(self.db, 'catalog_backfill_v1:netflix:movie'), legacy)
         self.assertEqual(sync.request_budget(self.db, later)['backfillAvailable'], 0)
@@ -603,6 +610,7 @@ class BudgetTests(unittest.TestCase):
     def test_live_november_backlog_publishes_four_more_pages_today_and_preserves_twenty_two_requests(self):
         self.prepared_catalogue()
         at=epoch('2026-11-20T17:00:00+00:00');self.attempts(at-1,374)
+        sync.set_meta(self.db,sync.LATEST_NEW_ATTEMPT_KEY,{'at':at})
         sync.set_meta(self.db,'new_release_attempts_v2',{'utcDay':at//sync.DAY,'attempts':2})
         pending=self.pending('new',at,pages=2);pending['publishedPages']=2
         sync.set_meta(self.db,'change_window_v2:new',pending)
@@ -679,6 +687,7 @@ class BudgetTests(unittest.TestCase):
     def test_two_legacy_pages_finish_old_window_then_current_window_uses_safe_catchup_before_maintenance(self):
         self.prepared_catalogue()
         at=epoch('2026-11-20T17:00:00+00:00');old_to=epoch('2026-11-19T07:37:00+00:00')
+        sync.set_meta(self.db,sync.LATEST_NEW_ATTEMPT_KEY,{'at':at})
         self.attempts(at-1,374)
         sync.set_meta(self.db,'new_release_attempts_v2',{'utcDay':at//sync.DAY,'attempts':2})
         state={'from':old_to-sync.DAY,'to':old_to,'cursor':'2','seen':['1','2'],'pages':2,'mapping':self.mapping}

@@ -196,6 +196,33 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
     new_result = {'completedThrough': iso(complete), 'ageHours': round(new_age, 2) if new_age is not None else None,
                   'pendingWindow': pending, 'lastProgressAt': iso(last_progress), 'progressObservedThisCheck': progressed}
     new_result['publication'] = {'publishedPages': published_pages, 'latestPublishedAt': iso(published_at)}
+    # Checking the newest page is useful progress, but cannot certify that all
+    # pages in the chronological feed have been collected.
+    latest_check = basis.get('latestNewCheck')
+    newest = None
+    if latest_check is not None:
+        raw = latest_check if isinstance(latest_check, dict) else {}
+        checked, start, end = (timestamp(raw.get(key)) for key in ('checkedAt', 'from', 'to'))
+        oldest, latest_event = (timestamp(raw.get(key)) for key in ('oldestEventAt', 'newestEventAt'))
+        events = count(raw.get('events'))
+        valid = (None not in (checked, start, end, events) and end - start == 48 * HOUR and events <= 25
+                 and start <= end == checked <= now and type(raw.get('hasMore')) is bool
+                 and raw.get('order') == 'desc' and raw.get('scope') == 'last48h' and type(raw.get('pages')) is int and raw['pages'] == 1
+                 and ((events == 0 and raw.get('oldestEventAt') is None and raw.get('newestEventAt') is None)
+                      or (events > 0 and oldest is not None and latest_event is not None
+                          and start <= oldest <= latest_event <= end)))
+        if valid:
+            newest = {'checkedAt': iso(checked), 'from': iso(start), 'to': iso(end), 'hasMore': raw['hasMore'],
+                      'events': events, 'oldestEventAt': iso(oldest), 'newestEventAt': iso(latest_event),
+                      'order': 'desc', 'pages': 1, 'scope': 'last48h'}
+            if raw['hasMore']:
+                add('newest_page_incomplete', 'warning', 'The newest release page was checked, but more matching changes remain.')
+            if age_level((now - checked) / HOUR):
+                add('newest_check_stale', age_level((now - checked) / HOUR), 'The newest-first release check is behind.',
+                    ageHours=round((now - checked) / HOUR, 2))
+        else:
+            add('newest_check_invalid', 'critical', 'The newest-first release check could not be validated.')
+    new_result['latestNewCheck'] = newest
     pending_feeds = {}
     for kind in ('new', 'updated', 'removed'):
         raw_feed = freshness.get(kind)
@@ -273,7 +300,8 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
     budget_result = {key: count(budget.get(key)) for key in ('monthlyLimit', 'requestsUsed', 'requestsRemaining', 'freshnessReserve',
                      'newFeedDailyLimit', 'newFeedRequestsToday', 'newFeedRequestsRemainingToday', 'protectedFutureDays',
                      'protectedFutureDailyTarget', 'plannedPerFutureDay', 'protectedFutureRequests', 'emergencyReserve',
-                     'catchupDailyLimit', 'freshRequestsAvailableToday')}
+                     'catchupDailyLimit', 'freshRequestsAvailableToday', 'futureHeadChecksToday',
+                     'reservedHeadRequestsToday', 'newBacklogRequestsAvailableToday')}
     for key in ('conservationMode', 'capacityInsufficient', 'newFeedBacklog'):
         budget_result[key] = budget.get(key) if type(budget.get(key)) is bool else None
     limit, used, remaining = (budget_result[k] for k in ('monthlyLimit', 'requestsUsed', 'requestsRemaining'))
@@ -316,7 +344,14 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
         required_sources = [s['id'] for s in discovery.get('sources', []) if isinstance(s, dict)
                             and isinstance(s.get('id'), str) and SOURCE_ID.fullmatch(s['id'])
                             and s.get('required', True) is True]
-    if not required_sources:
+    sony_paused = {s.get('id') for s in discovery.get('sources', []) if isinstance(s, dict)
+                   and s.get('platform') == 'SonyLIV' and s.get('status') == 'paused'
+                   and s.get('pauseReason') == 'permission-required' and s.get('required') is False}
+    approved_pause = {'sony-movies', 'sony-series'} <= sony_paused
+    if approved_pause:
+        add('official_discovery_permission_paused', 'warning',
+            'SonyLIV listing checks are paused pending permission; reviewed corrections remain available.')
+    if not required_sources and not approved_pause:
         add('official_required_sources_unknown', 'critical', 'No active required official-release discovery source is configured.')
     for source in discovery.get('sources', [])[:50]:
         if not isinstance(source, dict) or not isinstance(source.get('id'), str) or not SOURCE_ID.fullmatch(source['id']) or source['id'] in seen:
@@ -326,7 +361,7 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
         success, attempted = timestamp(source.get('lastSuccessAt')), timestamp(source.get('lastAttemptAt'))
         success = success if success is not None and success <= now else None
         attempted = attempted if attempted is not None and attempted <= now else None
-        status = source.get('status') if source.get('status') in ('ok', 'partial', 'error', 'blocked', 'unsupported', 'disabled') else 'unknown'
+        status = source.get('status') if source.get('status') in ('ok', 'partial', 'error', 'blocked', 'unsupported', 'disabled', 'paused') else 'unknown'
         required = ident in required_sources
         candidates = source.get('unverifiedCandidates', [])
         unresolved = len(candidates) if isinstance(candidates, list) else count(candidates)
@@ -365,6 +400,8 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
                   'candidates': count(source.get('candidates')), 'confirmed': count(source.get('confirmed')),
                   'gaps': gaps, 'unverifiedCandidates': unresolved, 'unverifiedReasons': reasons,
                   'sourceFlagConflicts': flag_conflicts, 'errors': error_count}
+        if status == 'paused' and source.get('pauseReason') == 'permission-required':
+            result['pauseReason'] = 'permission-required'
         if region_evidence:
             result['regionEvidence'] = region_evidence
         source_results.append(result)

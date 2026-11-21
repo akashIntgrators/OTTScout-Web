@@ -58,7 +58,7 @@ jobs:
           args=()
           if [[ "$SNAPSHOT_OUTCOME" != 'success' ]]; then args+=(--input-error public_snapshot_unavailable); fi
           if [[ "$HEARTBEAT_OUTCOME" != 'success' ]]; then args+=(--input-error heartbeat_unavailable); fi
-          python scripts/catalogue_health.py --report reports/no-private-pilot.json --discovery-report reports/no-new-source-check.json --catalog data/catalog.json --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --state .health-monitor/progress.json --required-source sony-movies --required-source sony-series "${args[@]}"
+          python scripts/catalogue_health.py --report reports/no-private-pilot.json --discovery-report reports/no-new-source-check.json --catalog data/catalog.json --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --state .health-monitor/progress.json "${args[@]}"
       - uses: actions/setup-node@v4
         if: steps.snapshot.outcome == 'success' && steps.health.outcome == 'success'
         with: {node-version: '24', cache: npm}
@@ -95,7 +95,7 @@ jobs:
       - name: Preserve an incident if status publication failed
         id: publication_guard
         if: always() && steps.health.outcome == 'success' && steps.deployment.outcome != 'success'
-        run: python scripts/catalogue_health.py --report reports/no-private-pilot.json --discovery-report reports/no-new-source-check.json --catalog data/catalog.json --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --state .health-monitor/progress.json --required-source sony-movies --required-source sony-series --input-error website_publication_failed
+        run: python scripts/catalogue_health.py --report reports/no-private-pilot.json --discovery-report reports/no-new-source-check.json --catalog data/catalog.json --workflow-runs reports/catalog-workflow-runs.json --previous-health reports/previous-public-health.json --state .health-monitor/progress.json --input-error website_publication_failed
       - name: Maintain the same GitHub incident
         if: always() && steps.health.outcome == 'success' && (steps.deployment.outcome == 'success' || steps.publication_guard.outcome == 'success')
         run: python scripts/notify_catalogue_health.py --repo "$ALERT_REPO" --mention "$ALERT_OWNER" --state .health-monitor/alert.json --workflow-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
