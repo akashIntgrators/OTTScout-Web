@@ -23,6 +23,7 @@ let audioDescriptionOnly = readList('ottscout-audio-description')?.[0] === true;
 let shortcutsEnabled = readList('ottscout-shortcuts')?.[0] === true;
 let announcementTimer;
 let pendingActionAnnouncement = false;
+let pendingActionMessages = [];
 let pendingResultAnnouncement = null;
 let visibleLimit = PAGE_SIZE;
 let selectedSearchId=null;
@@ -119,20 +120,31 @@ function focusTitle(id) {
   const target=id && document.getElementById(titleDomId(id))?.querySelector('a');
   (target || $('#heading')).focus();
 }
-function announceResults(message, action = false) {
-  // Preserve the action while retaining the latest result update that arrives
-  // during the debounce, including a quick filter change.
-  if (!action && pendingActionAnnouncement) { pendingResultAnnouncement=message; return; }
+function announceResults(message, action = false, results = '') {
+  // Keep actions separate from routine updates so a subsequent render cannot
+  // replace an action while assistive technology is still reading it.
+  if (pendingActionAnnouncement) {
+    if (action) {
+      pendingActionMessages.push(message);
+      if (results) pendingResultAnnouncement=results;
+    } else pendingResultAnnouncement=message;
+    return;
+  }
   clearTimeout(announcementTimer);
   pendingActionAnnouncement=action;
-  pendingResultAnnouncement=null;
-  const status=$('#results-status');
+  pendingActionMessages=action?[message]:[];
+  pendingResultAnnouncement=action&&results?results:null;
+  const status=$(action?'#action-status':'#results-status');
+  if(action) $('#action-feedback').textContent='Last action: '+message;
   // A repeated message must still produce a DOM change for screen readers.
   if (status.textContent) status.textContent='';
   announcementTimer=setTimeout(()=>{
     const latest=pendingResultAnnouncement;
-    status.textContent=latest && !message.endsWith(latest) ? `${message} Updated results: ${latest}` : message;
+    const actionText=pendingActionMessages.join(' ');
+    status.textContent=action ? `${actionText}${latest?' '+latest:''}` : message;
+    if(action) $('#action-feedback').textContent='Last action: '+actionText;
     pendingActionAnnouncement=false;
+    pendingActionMessages=[];
     pendingResultAnnouncement=null;
   },250);
 }
@@ -771,7 +783,8 @@ function render(actionMessage = '') {
   $('#load-more').hidden = view==='weekly'||found.length <= visibleLimit;
   $('#load-more').textContent = `Show ${Math.min(PAGE_SIZE, Math.max(0,found.length-visibleLimit))} more titles`;
   const resultMessage=weekly?weekly.description():`${{discover:'Discover',watchlist:'Watchlist',leaving:'Leaving soon'}[view]}: ${found.length} ${found.length===1?'title matches':'titles match'}. ${Math.min(visibleLimit,found.length)} shown.${audioDescriptionOnly?' Only provider-reported description languages matching Watch in are included; India playback is unverified.':''}`;
-  announceResults(actionMessage ? `${actionMessage} ${resultMessage}` : resultMessage, Boolean(actionMessage));
+  if(actionMessage) announceResults(actionMessage, true, resultMessage);
+  else announceResults(resultMessage);
 }
 function resetFilters() {
   selectedPlatforms.clear(); availablePlatforms().forEach(name=>selectedPlatforms.add(name));

@@ -145,6 +145,8 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .section-title h1 { font-size:1.875rem; font-weight:750; line-height:1.15; letter-spacing:-.5px; }
 .section-title p { margin-top:5px; font-size:0.875rem; line-height:1.45; color:var(--muted); }
 #result-count { flex:none; font-size:0.875rem; font-variant-numeric:tabular-nums; color:var(--muted); }
+.action-feedback { margin:-8px 0 18px; color:var(--muted); font-size:0.875rem; line-height:1.45; }
+.action-feedback:empty { display:none; }
 .notice { margin-bottom:16px; color:var(--muted); font-size:0.875rem; }
 .catalog-results,.date-titles { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
 .date-group { grid-column:1/-1; min-width:0; }
