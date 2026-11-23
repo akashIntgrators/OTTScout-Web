@@ -219,6 +219,10 @@ def build(root=ROOT, now=None):
     if status_script.exists():
         (target / 'web').mkdir(exist_ok=True)
         shutil.copy2(status_script, target / 'web/catalogue-status.js')
+    home_freshness_script = root / 'web/home-freshness.js'
+    if home_freshness_script.exists():
+        (target / 'web').mkdir(exist_ok=True)
+        shutil.copy2(home_freshness_script, target / 'web/home-freshness.js')
     if (root / 'app-ads.txt').exists():
         shutil.copy2(root / 'app-ads.txt', target / 'app-ads.txt')
     if (root / 'web/account.js').exists():
