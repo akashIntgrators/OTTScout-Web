@@ -17,6 +17,7 @@ try:
     from scripts.official_registry import load_records
     from scripts.status_page import render_status
     from scripts.corrections_page import correction_link, render_corrections
+    from scripts.catalogue_health import validated_latest_new_check
 except ModuleNotFoundError:
     from site_features import apply_reports, valid_reports, netflix_id, schema_graph, json_script, language_label
     from editorial_guides import EDITORIAL_GUIDES
@@ -24,6 +25,7 @@ except ModuleNotFoundError:
     from official_registry import load_records
     from status_page import render_status
     from corrections_page import correction_link, render_corrections
+    from catalogue_health import validated_latest_new_check
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 'https://ottscout.techiwithhelmet.com'
@@ -189,6 +191,11 @@ def widget_feed(catalog, now):
     titles.sort(key=lambda title: (-max(offer['addedAt'] for offer in title['offers']), title['title'].casefold(), title['id']))
     feed = {'schemaVersion': 1, 'country': 'IN', 'updatedAt': catalog['updatedAt'],
             'generatedAt': datetime.fromtimestamp(now, timezone.utc).isoformat(), 'coverage': platforms, 'titles': titles}
+    # Legacy widgets can continue reading schema 1. New widgets distinguish an
+    # actual provider page check from generation time and full-feed completion.
+    newest = validated_latest_new_check(catalog.get('latestNewCheck'), now)
+    if newest is not None:
+        feed['latestNewCheck'] = newest
     encoded = json.dumps(feed, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')
     # A failed build keeps the last successful deployment. Never silently trim
     # later titles, which would make language/platform filtering incomplete.

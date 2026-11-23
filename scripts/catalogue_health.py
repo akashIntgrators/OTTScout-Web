@@ -102,6 +102,29 @@ def _pending(value, now):
     return {'from': iso(start), 'to': iso(end), 'pages': pages, 'ageHours': round((now - start) / HOUR, 2)}
 
 
+def validated_latest_new_check(value, now):
+    """Return only bounded provider evidence, shared by health and widget exports.
+
+    A fresh publication time is not proof of a fresh streaming-source check.
+    This page observation also never replaces any complete-feed watermark.
+    """
+    raw = value if isinstance(value, dict) else {}
+    checked, start, end = (timestamp(raw.get(key)) for key in ('checkedAt', 'from', 'to'))
+    oldest, latest_event = (timestamp(raw.get(key)) for key in ('oldestEventAt', 'newestEventAt'))
+    events = count(raw.get('events'))
+    valid = (None not in (checked, start, end, events) and end - start == 48 * HOUR and events <= 25
+             and start <= end == checked <= now and type(raw.get('hasMore')) is bool
+             and raw.get('order') == 'desc' and raw.get('scope') == 'last48h' and type(raw.get('pages')) is int and raw['pages'] == 1
+             and ((events == 0 and raw.get('oldestEventAt') is None and raw.get('newestEventAt') is None)
+                  or (events > 0 and oldest is not None and latest_event is not None
+                      and start <= oldest <= latest_event <= end)))
+    if not valid:
+        return None
+    return {'checkedAt': iso(checked), 'from': iso(start), 'to': iso(end), 'hasMore': raw['hasMore'],
+            'events': events, 'oldestEventAt': iso(oldest), 'newestEventAt': iso(latest_event),
+            'order': 'desc', 'pages': 1, 'scope': 'last48h'}
+
+
 def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=None, previous=None,
                     now=None, thresholds=None, required_sources=None, input_errors=()):
     """Return (report, persisted progress state). Missing observations cannot be green."""
@@ -201,21 +224,10 @@ def evaluate_health(report=None, catalogue=None, discovery=None, workflow_runs=N
     latest_check = basis.get('latestNewCheck')
     newest = None
     if latest_check is not None:
-        raw = latest_check if isinstance(latest_check, dict) else {}
-        checked, start, end = (timestamp(raw.get(key)) for key in ('checkedAt', 'from', 'to'))
-        oldest, latest_event = (timestamp(raw.get(key)) for key in ('oldestEventAt', 'newestEventAt'))
-        events = count(raw.get('events'))
-        valid = (None not in (checked, start, end, events) and end - start == 48 * HOUR and events <= 25
-                 and start <= end == checked <= now and type(raw.get('hasMore')) is bool
-                 and raw.get('order') == 'desc' and raw.get('scope') == 'last48h' and type(raw.get('pages')) is int and raw['pages'] == 1
-                 and ((events == 0 and raw.get('oldestEventAt') is None and raw.get('newestEventAt') is None)
-                      or (events > 0 and oldest is not None and latest_event is not None
-                          and start <= oldest <= latest_event <= end)))
-        if valid:
-            newest = {'checkedAt': iso(checked), 'from': iso(start), 'to': iso(end), 'hasMore': raw['hasMore'],
-                      'events': events, 'oldestEventAt': iso(oldest), 'newestEventAt': iso(latest_event),
-                      'order': 'desc', 'pages': 1, 'scope': 'last48h'}
-            if raw['hasMore']:
+        newest = validated_latest_new_check(latest_check, now)
+        if newest is not None:
+            checked = timestamp(newest['checkedAt'])
+            if newest['hasMore']:
                 add('newest_page_incomplete', 'warning', 'The newest release page was checked, but more matching changes remain.')
             if age_level((now - checked) / HOUR):
                 add('newest_check_stale', age_level((now - checked) / HOUR), 'The newest-first release check is behind.',
