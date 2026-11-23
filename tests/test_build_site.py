@@ -122,6 +122,7 @@ class DiscoveryBuildTests(unittest.TestCase):
             for name in ('index.html','app.js','style.css','CNAME'):(root/name).write_text('')
             (root/'web').mkdir(); (root/'web/account.js').write_text('// fixture entry')
             (root/'web/recommendation-links.js').write_text('// public recommendation receiver fixture')
+            (root/'web/home-freshness.js').write_text('// public freshness notice fixture')
             (root/'web/not-public.txt').write_text('do not package the entire web source directory')
             (root/'scripts').mkdir()
             (root/'scripts/build-auth.mjs').write_text("import {writeFileSync} from 'node:fs';writeFileSync(process.argv[2], '// bundled account fixture');")
@@ -132,6 +133,7 @@ class DiscoveryBuildTests(unittest.TestCase):
             self.assertEqual((site/'account.js').read_text(),'// bundled account fixture')
             self.assertEqual(json.loads((site/'firebase-config.json').read_text()),config)
             self.assertEqual((site/'web/recommendation-links.js').read_text(),'// public recommendation receiver fixture')
+            self.assertEqual((site/'web/home-freshness.js').read_text(),'// public freshness notice fixture')
             self.assertFalse((site/'web/account.js').exists())
             self.assertFalse((site/'web/not-public.txt').exists())
             config['private_key']='never publish a service-account key'

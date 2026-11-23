@@ -3,6 +3,9 @@ from pathlib import Path
 import unittest
 
 class BrowserFilterTests(unittest.TestCase):
+    def test_home_freshness_notice(self):
+        subprocess.run(['node', '--test', 'tests/home_freshness.cjs'], cwd=Path(__file__).resolve().parents[1], check=True)
+
     def test_account_dialog_accessibility(self):
         subprocess.run(['node', 'tests/account_ui.cjs'], cwd=Path(__file__).resolve().parents[1], check=True)
 

@@ -148,6 +148,7 @@ input[type="checkbox"] { width:17px; height:17px; margin:0; flex:none; accent-co
 .action-feedback { margin:-8px 0 18px; color:var(--muted); font-size:0.875rem; line-height:1.45; }
 .action-feedback:empty { display:none; }
 .notice { margin-bottom:16px; color:var(--muted); font-size:0.875rem; }
+#home-freshness a { text-decoration:underline; }
 .catalog-results,.date-titles { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
 .date-group { grid-column:1/-1; min-width:0; }
 .date-summary { display:flex; flex-wrap:wrap; align-items:center; gap:14px; min-height:56px; padding:12px 0; border-bottom:1px solid var(--border); list-style:none; cursor:pointer; }
