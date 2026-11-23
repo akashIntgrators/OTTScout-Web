@@ -1,5 +1,6 @@
 """The Android widget gets a bounded public feed, with offer-level evidence."""
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,6 +30,16 @@ def catalogue(titles):
             'titles': titles}
 
 
+def iso(value):
+    return datetime.fromtimestamp(value, timezone.utc).isoformat()
+
+
+def newest_check(**overrides):
+    return {'checkedAt': iso(NOW - 5), 'from': iso(NOW - 5 - 48 * 3600), 'to': iso(NOW - 5),
+            'hasMore': True, 'events': 25, 'oldestEventAt': iso(NOW - 50),
+            'newestEventAt': iso(NOW - 10), 'order': 'desc', 'pages': 1, 'scope': 'last48h', **overrides}
+
+
 class WidgetFeedTests(unittest.TestCase):
     def decode(self, source):
         return json.loads(build_site.widget_feed(source, NOW))
@@ -49,6 +60,37 @@ class WidgetFeedTests(unittest.TestCase):
              'addedAt': NOW - 20, 'expiresOn': None}])
         self.assertEqual(result['updatedAt'], '2026-11-06T00:00:00+00:00')
         self.assertEqual(result['generatedAt'], '2026-11-06T08:00:00+00:00')
+
+    def test_provider_page_observation_keeps_its_partial_scope_and_complete_watermark(self):
+        source = catalogue([title()])
+        source['latestNewCheck'] = newest_check(privateIgnoredField='must not escape')
+        result = self.decode(source)
+        self.assertEqual(result['schemaVersion'], 1)
+        self.assertEqual(result['latestNewCheck'], newest_check())
+        self.assertTrue(result['latestNewCheck']['hasMore'])
+        self.assertEqual(result['updatedAt'], source['updatedAt'])
+        self.assertNotEqual(result['latestNewCheck']['checkedAt'], result['generatedAt'])
+
+    def test_zero_event_check_is_valid_without_event_dates(self):
+        source = catalogue([title()])
+        source['latestNewCheck'] = newest_check(events=0, hasMore=False, oldestEventAt=None, newestEventAt=None)
+        self.assertEqual(self.decode(source)['latestNewCheck'], source['latestNewCheck'])
+
+    def test_invalid_observations_and_legacy_feeds_cannot_claim_a_new_provider_check(self):
+        invalid = [None, 'not a check', {}, newest_check(checkedAt=iso(NOW + 1), to=iso(NOW + 1)),
+                   newest_check(**{'from': iso(NOW - 48 * 3600)}),
+                   newest_check(order='asc'), newest_check(pages=True), newest_check(pages=2),
+                   newest_check(events=26), newest_check(events=True), newest_check(hasMore='false'),
+                   newest_check(scope='all'), newest_check(newestEventAt=iso(NOW)),
+                   newest_check(oldestEventAt=iso(NOW - 49 * 3600)),
+                   newest_check(events=0), newest_check(newestEventAt=None)]
+        for check in invalid:
+            with self.subTest(check=check):
+                source = {**catalogue([title()]), 'latestNewCheck': check}
+                result = self.decode(source)
+                self.assertNotIn('latestNewCheck', result)
+                self.assertEqual(result['updatedAt'], source['updatedAt'])
+        self.assertNotIn('latestNewCheck', self.decode(catalogue([title()])))
 
     def test_weekly_window_includes_boundary_but_never_falls_back_to_older_titles(self):
         rows = [title('motn:boundary', weeklyUpdatedAt=NOW - 7 * DAY),
